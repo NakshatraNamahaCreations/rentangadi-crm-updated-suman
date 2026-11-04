@@ -24,9 +24,70 @@ import Pagination from "../../components/Pagination";
 import EnquiryPeek from "./EnquiryPeek";
 import { toast } from "react-hot-toast";
 
-/* An enquiry is "Quoted" once a quotation has been generated for it; anything
-   else is still open. These are the only two states the record carries. */
-const isQuoted = (enq) => String(enq?.status || "").toLowerCase() === "sent";
+/**
+ * How far an enquiry has travelled.
+ *
+ * The record itself only says "sent"/"not send", which tells you a
+ * quotation exists but nothing about what became of it. The stage follows
+ * the enquiry to its quotation (quotations.enquiryId) and the quotation to
+ * its order (orders.quoteId), so the list can say whether the job was
+ * confirmed or called off.
+ *
+ * The four are exclusive, so every row shows exactly one.
+ */
+const STAGES = [
+  { value: "pending", label: "Pending", tone: "pending" },
+  { value: "sent", label: "Quotation Sent", tone: "sent" },
+  { value: "confirmed", label: "Confirmed", tone: "confirmed" },
+  { value: "cancelled", label: "Cancelled", tone: "cancelled" },
+];
+
+const STAGE_LABEL = Object.fromEntries(STAGES.map((x) => [x.value, x.label]));
+const STAGE_TONE = Object.fromEntries(STAGES.map((x) => [x.value, x.tone]));
+
+/**
+ * Builds enquiryId -> stage once per data load.
+ * A confirmed order outranks a cancelled one, so an enquiry re-confirmed
+ * after a cancellation reads as confirmed.
+ */
+const buildStageMap = (quotations, orders) => {
+  const orderByQuote = new Map();
+  orders.forEach((o) => {
+    const k = String(o?.quoteId || "");
+    if (!k) return;
+    const state = String(o?.orderStatus || "").toLowerCase();
+    if (orderByQuote.get(k) === "confirm") return;
+    orderByQuote.set(k, state);
+  });
+
+  const byEnquiry = new Map();
+  quotations.forEach((q) => {
+    const k = String(q?.enquiryId ?? "");
+    if (!k) return;
+    if (!byEnquiry.has(k)) byEnquiry.set(k, []);
+    byEnquiry.get(k).push(q);
+  });
+
+  const stages = new Map();
+  byEnquiry.forEach((quotes, enquiryId) => {
+    let stage = null;
+    for (const q of quotes) {
+      const os = orderByQuote.get(String(q?.quoteId || ""));
+      if (os === "confirm") {
+        stage = "confirmed";
+        break;
+      }
+      if (os === "cancelled") stage = stage || "cancelled";
+      if (String(q?.status || "").toLowerCase() === "cancelled") {
+        stage = stage || "cancelled";
+      }
+    }
+    /* A quotation exists but nothing was ordered from it yet. */
+    stages.set(enquiryId, stage || "sent");
+  });
+
+  return stages;
+};
 
 const inr = (n) =>
   new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 }).format(
@@ -51,6 +112,8 @@ const EnquiryList = () => {
   const [enquiries, setEnquiries] = useState([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
+  const [quotations, setQuotations] = useState([]);
+  const [orders, setOrders] = useState([]);
   const [executiveFilter, setExecutiveFilter] = useState("all");
   /* Filtered on the date the table shows - the event date - not on when the
      record was raised, so the dates picked match the column being read. */
@@ -66,26 +129,78 @@ const EnquiryList = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
 
+  /**
+   * The quotation and order lists, with the two fields that link them back
+   * to an enquiry.
+   *
+   * The plain list call is cached server side and cheap, but its projection
+   * leaves out quotations.enquiryId and orders.quoteId. Asking for "full"
+   * returns whole documents, which do carry them, at about 2MB and four
+   * seconds a list - so the cheap call is tried first and the heavy one only
+   * when the keys really are missing. A backend that projects them makes the
+   * second call stop happening on its own.
+   */
+  const fetchLinked = async (path, arrayKey, linkField) => {
+    const read = async (url) => {
+      const res = await axios.get(url);
+      const rows = res?.data?.[arrayKey];
+      return Array.isArray(rows) ? rows : [];
+    };
+
+    const rows = await read(`${ApiURL}${path}`);
+    if (rows.some((r) => r?.[linkField] != null)) return rows;
+
+    /* Nothing came back carrying the link, so the projection is the older
+       one. An empty list is left alone - there is nothing to re-ask for. */
+    if (!rows.length) return rows;
+    return read(`${ApiURL}${path}?full=1`);
+  };
+
   useEffect(() => {
-    const fetchEnquiries = async () => {
+    const fetchAll = async () => {
       setLoading(true);
-      try {
-        const res = await axios.get(`${ApiURL}/Enquiry/getallEnquiry`);
-        if (res.status === 200) {
-          setEnquiries(Array.isArray(res.data) ? res.data : res.data?.data || []);
-        }
-      } catch (error) {
-        console.error("Error fetching enquiries:", error);
+
+      const [enqRes, quoteRes, orderRes] = await Promise.allSettled([
+        axios.get(`${ApiURL}/Enquiry/getallEnquiry`),
+        fetchLinked("/quotations/getallquotations", "quoteData", "enquiryId"),
+        fetchLinked("/order/getallorder", "orderData", "quoteId"),
+      ]);
+
+      if (enqRes.status === "fulfilled" && enqRes.value?.status === 200) {
+        const d = enqRes.value.data;
+        setEnquiries(Array.isArray(d) ? d : d?.data || []);
+      } else {
+        console.error("Error fetching enquiries:", enqRes.reason);
       }
+
+      /* A missing quotation or order list only costs the stage column; the
+         enquiries themselves still list. */
+      if (quoteRes.status === "fulfilled") setQuotations(quoteRes.value);
+      else console.error("Error fetching quotations:", quoteRes.reason);
+
+      if (orderRes.status === "fulfilled") setOrders(orderRes.value);
+      else console.error("Error fetching orders:", orderRes.reason);
+
       setLoading(false);
     };
-    fetchEnquiries();
+    fetchAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  const stageMap = useMemo(
+    () => buildStageMap(quotations, orders),
+    [quotations, orders]
+  );
+
+  /* No quotation was ever raised for this enquiry. */
+  const stageOf = React.useCallback(
+    (enq) => stageMap.get(String(enq?.enquiryId ?? "")) || "pending",
+    [stageMap]
+  );
 
   /* ---- Stat tiles, all computed from the fetched list ---- */
   const stats = useMemo(() => {
     const total = enquiries.length;
-    const quoted = enquiries.filter(isQuoted).length;
+    const quoted = enquiries.filter((e) => stageOf(e) === "confirmed").length;
     const open = total - quoted;
     const value = enquiries.reduce((s, e) => s + (Number(e?.GrandTotal) || 0), 0);
 
@@ -110,7 +225,7 @@ const EnquiryList = () => {
         : null;
 
     return { total, quoted, open, value, trend };
-  }, [enquiries]);
+  }, [enquiries, stageOf]);
 
   const executives = useMemo(() => {
     const set = new Set();
@@ -130,8 +245,8 @@ const EnquiryList = () => {
       if (q && !(hit(e.enquiryId) || hit(e.clientName) || hit(e.executivename) || hit(e.clientNo) || hit(e.enquiryDate))) {
         return false;
       }
-      if (statusFilter === "open" && isQuoted(e)) return false;
-      if (statusFilter === "quoted" && !isQuoted(e)) return false;
+      /* "all" means every stage; otherwise it names one exactly. */
+      if (statusFilter !== "all" && stageOf(e) !== statusFilter) return false;
       if (executiveFilter !== "all" && String(e?.executivename || "").trim() !== executiveFilter) {
         return false;
       }
@@ -160,7 +275,7 @@ const EnquiryList = () => {
     });
 
     return rows;
-  }, [enquiries, searchQuery, statusFilter, executiveFilter, fromDate, toDate, sortBy]);
+  }, [enquiries, searchQuery, statusFilter, executiveFilter, fromDate, toDate, sortBy, stageOf]);
 
   // Any filter change invalidates the current page.
   useEffect(() => {
@@ -240,7 +355,7 @@ const EnquiryList = () => {
         Contact: e?.clientNo || "",
         Executive: e?.executivename || "",
         Amount: Number(e?.GrandTotal) || 0,
-        Status: isQuoted(e) ? "Quoted" : "Open",
+        Status: STAGE_LABEL[stageOf(e)] || "Pending",
       }));
       const worksheet = XLSX.utils.json_to_sheet(rows);
       const workbook = XLSX.utils.book_new();
@@ -267,17 +382,17 @@ const EnquiryList = () => {
     },
     {
       key: "open",
-      label: "Open",
+      label: "Not Confirmed",
       value: stats.open,
-      hint: "No quotation yet",
+      hint: "Pending, quoted or cancelled",
       icon: FaRegClock,
       tone: "amber",
     },
     {
       key: "quoted",
-      label: "Quoted",
+      label: "Confirmed",
       value: stats.quoted,
-      hint: "Quotation created",
+      hint: "Became a confirmed order",
       icon: FaCheckCircle,
       tone: "green",
     },
@@ -360,8 +475,11 @@ const EnquiryList = () => {
             aria-label="Filter by status"
           >
             <option value="all">All Status</option>
-            <option value="open">Open</option>
-            <option value="quoted">Quoted</option>
+            {STAGES.map((x) => (
+              <option key={x.value} value={x.value}>
+                {x.label}
+              </option>
+            ))}
           </Form.Select>
 
           <Form.Select
@@ -477,7 +595,7 @@ const EnquiryList = () => {
                 </tr>
               ) : (
                 currentItems.map((enq) => {
-                  const quoted = isQuoted(enq);
+                  const stage = stageOf(enq);
                   return (
                     <tr
                       key={enq._id}
@@ -524,8 +642,10 @@ const EnquiryList = () => {
                       </td>
 
                       <td>
-                        <span className={`eq-pill ${quoted ? "is-quoted" : "is-open"}`}>
-                          {quoted ? "Quoted" : "Open"}
+                        <span
+                          className={`eq-pill is-${STAGE_TONE[stage] || "pending"}`}
+                        >
+                          {STAGE_LABEL[stage] || "Pending"}
                         </span>
                       </td>
 
@@ -590,7 +710,12 @@ const EnquiryList = () => {
         </div>
       </Card>
 
-      <EnquiryPeek enquiry={activeEnquiry} onClose={() => setActiveId(null)} />
+      <EnquiryPeek
+        enquiry={activeEnquiry}
+        stageLabel={activeEnquiry ? STAGE_LABEL[stageOf(activeEnquiry)] : null}
+        stageTone={activeEnquiry ? STAGE_TONE[stageOf(activeEnquiry)] : null}
+        onClose={() => setActiveId(null)}
+      />
       </div>
     </Container>
   );

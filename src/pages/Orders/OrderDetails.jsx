@@ -103,9 +103,10 @@ const OrderDetails = () => {
   // Add Product Modal states
   const [showAdd, setShowAdd] = useState(false);
   const [allProducts, setAllProducts] = useState([]);
-  const [addProductId, setAddProductId] = useState("");
-  const [addQty, setAddQty] = useState(1);
-  const [selectedAddProduct, setSelectedAddProduct] = useState(null);
+  /* One entry per product picked in the Add Product dialog. Several can be
+     added at once, and each carries its own availability and quantity:
+     { productId, product, availableStock, qty, loading } */
+  const [addRows, setAddRows] = useState([]);
 
   // Edit product states
   const [editIdx, setEditIdx] = useState(null);
@@ -683,130 +684,184 @@ const OrderDetails = () => {
 
   const handleShowAdd = () => {
     setShowAdd(true);
-    setAddProductId("");
-    setAddQty(1);
-    setSelectedAddProduct(null);
+    setAddRows([]);
   };
 
   const handleCloseAdd = () => {
     setShowAdd(false);
-    setAddProductId("");
-    setAddQty(1);
-    setSelectedAddProduct(null);
+    setAddRows([]);
   };
 
-  const handleProductSelect = async (selected) => {
-    if (selected) {
-      const productId = selected.value;
-      setAddProductId(productId);
-      setAddQty(1);
-
-      const productObj = allProducts.find(
-        (p) => String(p._id) === String(productId)
+  /**
+   * Availability for one product over the order's slot dates. Asked per
+   * product because that is what the endpoint takes; the picks run in
+   * parallel so choosing five is no slower than choosing one.
+   */
+  const fetchAvailability = async (productId) => {
+    try {
+      const res = await axios.post(
+        `${ApiURL}/inventory/product/filter/${productId}`,
+        {},
+        {
+          params: {
+            startDate: order?.slots?.[0]?.quoteDate,
+            endDate: order?.slots?.[0]?.endDate,
+            productId,
+          },
+        }
       );
+      return Number(res.data?.availableStock) || 0;
+    } catch (error) {
+      console.error("Error fetching product availability:", error);
+      return 0;
+    }
+  };
 
+  /**
+   * The dialog's product picker. Rows already priced keep their quantity,
+   * so adding a sixth product does not reset the five already set up.
+   */
+  const handleProductsSelect = async (selectedOptions) => {
+    const picked = selectedOptions || [];
+    const pickedIds = picked.map((o) => String(o.value));
+
+    setAddRows((prev) => {
+      const kept = prev.filter((r) => pickedIds.includes(String(r.productId)));
+      const keptIds = kept.map((r) => String(r.productId));
+      const added = pickedIds
+        .filter((id) => !keptIds.includes(id))
+        .map((id) => ({
+          productId: id,
+          product: allProducts.find((p) => String(p._id) === String(id)) || null,
+          availableStock: 0,
+          qty: 1,
+          loading: true,
+        }));
+      /* Keep the picker's order, so the list reads the way it was built. */
+      const byId = {};
+      [...kept, ...added].forEach((r) => {
+        byId[String(r.productId)] = r;
+      });
+      return pickedIds.map((id) => byId[id]).filter(Boolean);
+    });
+
+    /* Only the newly picked ones need a lookup. */
+    const known = addRows.map((r) => String(r.productId));
+    const fresh = pickedIds.filter((id) => !known.includes(id));
+
+    await Promise.all(
+      fresh.map(async (id) => {
+        const stock = await fetchAvailability(id);
+        setAddRows((prev) =>
+          prev.map((r) =>
+            String(r.productId) === String(id)
+              ? {
+                  ...r,
+                  availableStock: stock,
+                  /* Never offer more than the dates allow. */
+                  qty: Math.min(Math.max(1, r.qty || 1), stock || 1),
+                  loading: false,
+                }
+              : r
+          )
+        );
+      })
+    );
+  };
+
+  const setRowQty = (productId, value) => {
+    setAddRows((prev) =>
+      prev.map((r) => {
+        if (String(r.productId) !== String(productId)) return r;
+        const raw = String(value).replace(/^0+/, "");
+        if (raw === "") return { ...r, qty: "" };
+        let qty = Math.max(1, Number(raw) || 1);
+        if (r.availableStock && qty > r.availableStock) qty = r.availableStock;
+        return { ...r, qty };
+      })
+    );
+  };
+
+  const removeAddRow = (productId) =>
+    setAddRows((prev) =>
+      prev.filter((r) => String(r.productId) !== String(productId))
+    );
+
+  const priceOf = (row) => Number(row?.product?.ProductPrice) || 0;
+  const lineTotalOf = (row) => (Number(row?.qty) || 0) * priceOf(row);
+
+  /* A row is ready when it has stock to draw on and a quantity within it. */
+  const rowIsReady = (row) =>
+    !row.loading &&
+    row.availableStock > 0 &&
+    Number(row.qty) >= 1 &&
+    Number(row.qty) <= row.availableStock;
+
+  const addRowsReady = addRows.length > 0 && addRows.every(rowIsReady);
+  const addRowsTotal = addRows.reduce((sum, r) => sum + lineTotalOf(r), 0);
+  /**
+   * Adds every product picked.
+   *
+   * The endpoint takes one product per call and rewrites the order each
+   * time, so the calls go one after another rather than at once - firing
+   * them together would have each overwrite the last. A call that fails
+   * does not stop the rest, and the result says exactly how many landed.
+   */
+  const handleAddProduct = async () => {
+    if (!addRows.length || !addRowsReady) return;
+
+    const slot = order?.slots?.[0] || {};
+    setAddProductLoading(true);
+
+    const failed = [];
+    let added = 0;
+
+    for (const row of addRows) {
       try {
-        console.log("order quotedate: ", order.slots[0].quoteDate);
-        console.log("order enddate: ", order.slots[0].endDate);
-        const res = await axios.post(
-          `${ApiURL}/inventory/product/filter/${productId}`,
-          {},
+        const response = await axios.put(
+          `${ApiURL}/order/addNewProductToOrderById/${order._id}`,
           {
-            params: {
-              startDate: order.slots[0].quoteDate,
-              endDate: order.slots[0].endDate,
-              productId,
-            },
+            productId: row.product._id,
+            productName: row.product.ProductName,
+            unitPrice: Number(row.product.ProductPrice),
+            quantity: Number(row.qty) || 1,
+            quoteDate: slot.quoteDate,
+            endDate: slot.endDate,
+            isNewProduct: true,
+            productQuoteDate: slot.quoteDate,
+            productEndDate: slot.endDate,
+            productSlot: "Slot 1: 7:00 AM to 11:00 PM",
           }
         );
-
-        console.log("inventory/product/filter res.data: ", res.data);
-
-        if (res.data?.availableStock) {
-          console.log("res.data?.avaiableStock");
-          setSelectedAddProduct({
-            ...productObj,
-            availableStock: res.data.availableStock,
-          });
-        } else {
-          setSelectedAddProduct(null);
-        }
+        if (response.status === 200) added += 1;
+        else failed.push(row.product?.ProductName || "a product");
       } catch (error) {
-        console.error("Error fetching product:", error);
-        setSelectedAddProduct(null);
+        console.error("Error adding product:", error?.message);
+        failed.push(row.product?.ProductName || "a product");
       }
-    } else {
-      // Handle clearing
-      setAddProductId("");
-      setSelectedAddProduct(null);
-      setAddQty(0);
     }
-  };
-
-  const handleAddProduct = async () => {
-    if (!selectedAddProduct || !addQty) return;
-    // console.log("selectedAddProduct: ", selectedAddProduct)
-    // const productSlot = productDates[selectedAddProduct._id]?.productSlot || order.slots[0].quoteTime;
-
-    // Prepare new product object
-    const newProduct = {
-      productId: selectedAddProduct._id,
-      productName: selectedAddProduct.ProductName,
-      quantity: addQty,
-      unitPrice: Number(selectedAddProduct.ProductPrice),
-      total: addQty * Number(selectedAddProduct.ProductPrice),
-      ProductIcon: selectedAddProduct.ProductIcon,
-      availableStock: selectedAddProduct.availableStock,
-    };
-
-    const requestData = {
-      productId: selectedAddProduct._id, // ID of the selected product to update
-      productName: selectedAddProduct.ProductName,
-      unitPrice: Number(selectedAddProduct.ProductPrice),
-      quantity: addQty, // Updated quantity for the product
-      quoteDate: order.slots[0].quoteDate, // Start date from the first slot
-      endDate: order.slots[0].endDate, // End date from the first slot
-      isNewProduct: true, // Flag to mark it as a new product addition
-      productQuoteDate: order.slots[0].quoteDate,
-      productEndDate: order.slots[0].endDate,
-      productSlot: "Slot 1: 7:00 AM to 11:00 PM",
-    };
-
-    // Log the request data to console
-    console.log("Request Data to be sent:", requestData);
-    setAddProductLoading(true)
 
     try {
-      // Send the updated quantity to the backend for processing
-      const response = await axios.put(
-        `${ApiURL}/order/addNewProductToOrderById/${order._id}`,
-        {
-          productId: selectedAddProduct._id,
-          productName: selectedAddProduct.ProductName,
-          unitPrice: Number(selectedAddProduct.ProductPrice),
-          quantity: addQty, // The new quantity
-          quoteDate: order.slots[0].quoteDate, // Start date of the slot
-          endDate: order.slots[0].endDate, // End date of the slot
-          isNewProduct: true,
-          productQuoteDate: order.slots[0].quoteDate,
-          productEndDate: order.slots[0].endDate,
-          productSlot: "Slot 1: 7:00 AM to 11:00 PM",
-        }
-      );
-      if (response.status === 200) {
-        console.log(`response is 200. added successfully`);
-        fetchOrderDetails();
-        // setProducts((prev) => [...prev, newProduct]);
-      }
-    } catch (error) {
-      console.error("Error setting up the request:", error.message);
-      toast.error("An unexpected error occurred. Please try again.");
-    } finally {
-      setShowAdd(false);
-      setAddProductLoading(false)
+      await fetchOrderDetails();
+    } catch (e) {
+      console.error("Error refreshing the order:", e?.message);
     }
-  };
 
+    if (added) {
+      toast.success(
+        added === 1
+          ? "Product added successfully"
+          : `${added} products added successfully`
+      );
+    }
+    if (failed.length) {
+      toast.error(`Could not add: ${failed.join(", ")}`);
+    }
+
+    setShowAdd(false);
+    setAddRows([]);
+    setAddProductLoading(false);
+  };
 
 
   // Edit product logic
@@ -2399,7 +2454,7 @@ const OrderDetails = () => {
         </Card>
 
         {/* Add Product Modal */}
-        <Modal show={showAdd} onHide={handleCloseAdd} centered>
+        <Modal show={showAdd} onHide={handleCloseAdd} centered size="lg">
           <Modal.Header closeButton>
             <Modal.Title>Add Product</Modal.Title>
           </Modal.Header>
@@ -2408,138 +2463,146 @@ const OrderDetails = () => {
               <Form.Group className="mb-3" controlId="addProductSelect">
                 <Form.Label>Product Name</Form.Label>
                 <Select
+                  isMulti
                   options={availableToAdd.map((p) => ({
                     value: p._id,
                     label: p.ProductName,
                   }))}
-                  value={
-                    addProductId
-                      ? availableToAdd
-                        .map((p) => ({ value: p._id, label: p.ProductName }))
-                        .find(
-                          (opt) => String(opt.value) === String(addProductId)
-                        )
-                      : null
-                  }
-                  onChange={handleProductSelect}
+                  value={addRows.map((r) => ({
+                    value: r.productId,
+                    label: r.product?.ProductName || r.productId,
+                  }))}
+                  onChange={handleProductsSelect}
                   isClearable
-                  placeholder="Search product..."
+                  closeMenuOnSelect={false}
+                  placeholder="Search products..."
+                  menuPortalTarget={
+                    typeof document !== "undefined" ? document.body : null
+                  }
+                  styles={{
+                    menuPortal: (base) => ({ ...base, zIndex: 2000 }),
+                  }}
                 />
+                <Form.Text muted>
+                  Pick as many as you need; each one gets its own quantity
+                  below.
+                </Form.Text>
               </Form.Group>
-              <Row>
-                <Col xs={6}>
-                  <Form.Group className="mb-3" controlId="addProductStock">
-                    <Form.Label>Available Stock</Form.Label>
-                    <Form.Control
-                      type="text"
-                      value={
-                        selectedAddProduct ? selectedAddProduct.availableStock : 0
-                      }
-                      disabled
-                    />
-                  </Form.Group>
-                </Col>
-                <Col xs={6}>
-                  <Form.Group className="mb-3" controlId="addProductQty">
-                    <Form.Label>Quantity</Form.Label>
-                    <Form.Control
-                      type="number"
-                      min={1}
-                      max={selectedAddProduct?.availableStock || 1}
-                      value={addQty}
-                      disabled={!addProductId}
-                      onChange={(e) => {
-                        let val = e.target.value.replace(/^0+/, "");
-                        let qty = val === "" ? "" : Math.max(1, Number(val));
-                        if (
-                          selectedAddProduct &&
-                          qty > selectedAddProduct.availableStock
-                        ) {
-                          qty = selectedAddProduct.availableStock;
-                        }
-                        setAddQty(qty);
-                      }}
-                    />
-                    {selectedAddProduct &&
-                      addQty > selectedAddProduct.availableStock && (
-                        <div style={{ color: "red", fontSize: 12 }}>
-                          Cannot exceed available stock (
-                          {selectedAddProduct.availableStock})
-                        </div>
-                      )}
-                  </Form.Group>
-                </Col>
-                <Col xs={6}>
-                  <Form.Group className="mb-3" controlId="addProductPrice">
-                    <Form.Label>Price</Form.Label>
-                    <Form.Control
-                      type="text"
-                      value={`₹${selectedAddProduct ? selectedAddProduct.ProductPrice : 0
-                        }`}
-                      disabled
-                    />
-                  </Form.Group>
-                </Col>
-                <Col xs={6}>
-                  <Form.Group className="mb-3" controlId="addProductTotal">
-                    <Form.Label>Total Price</Form.Label>
-                    <Form.Control
-                      type="text"
-                      value={
-                        selectedAddProduct
-                          ? `₹${(addQty ? addQty : 1) *
-                          selectedAddProduct.ProductPrice
-                          }`
-                          : "₹0"
-                      }
-                      disabled
-                    />
-                  </Form.Group>
-                </Col>
-                {/* <Col xs={6}>
-                <Form.Group className="mb-3" controlId="addProductTotal">
-                  <Form.Label>choose slot</Form.Label>
-                  <Form.Select
-                    className="m-0 mt-1"
-                    value={
-                      productDates[selectedAddProduct?.productId]?.productSlot ||
-                      selectedAddProduct?.productSlot
-                    } // Default to initial slot value
-                    onChange={(e) =>
-                      handleDateChange(
-                        selectedAddProduct._id,
-                        "productSlot",
-                        e.target.value,
-                        e.target.value
-                      )
-                    }
-                  >
-                    {deliveryDismantleSlots.map((s) => (
-                      <option key={s} value={s}>
-                        {s}
-                      </option>
-                    ))}
-                  </Form.Select>
-                </Form.Group>
-              </Col> */}
-              </Row>
+
+              {addRows.length ? (
+                <div className="qa-picked">
+                  <div className="qa-picked__head">
+                    <span>Product</span>
+                    <span className="text-center">Available</span>
+                    <span className="text-center">Qty</span>
+                    <span className="text-end">Price</span>
+                    <span className="text-end">Total</span>
+                    <span />
+                  </div>
+
+                  {addRows.map((row) => {
+                    const price = priceOf(row);
+                    const over =
+                      !row.loading &&
+                      row.availableStock > 0 &&
+                      Number(row.qty) > row.availableStock;
+                    const none = !row.loading && row.availableStock <= 0;
+
+                    return (
+                      <div
+                        key={row.productId}
+                        className={`qa-picked__row${none ? " is-blocked" : ""}`}
+                      >
+                        <span className="qa-picked__name">
+                          {row.product?.ProductName || "Product"}
+                          {none ? (
+                            <span className="qa-picked__warn">
+                              Nothing free on these dates
+                            </span>
+                          ) : over ? (
+                            <span className="qa-picked__warn">
+                              Cannot exceed {row.availableStock}
+                            </span>
+                          ) : null}
+                        </span>
+
+                        <span className="text-center">
+                          {row.loading ? (
+                            <Spinner animation="border" size="sm" />
+                          ) : (
+                            row.availableStock
+                          )}
+                        </span>
+
+                        <span className="text-center">
+                          <Form.Control
+                            type="number"
+                            min={1}
+                            max={row.availableStock || 1}
+                            value={row.qty}
+                            disabled={row.loading || none}
+                            onChange={(e) =>
+                              setRowQty(row.productId, e.target.value)
+                            }
+                            size="sm"
+                            className="qa-picked__qty"
+                          />
+                        </span>
+
+                        <span className="text-end">&#8377;{price}</span>
+                        <span className="text-end qa-picked__total">
+                          &#8377;{lineTotalOf(row)}
+                        </span>
+
+                        <span className="text-end">
+                          <button
+                            type="button"
+                            className="qa-picked__x"
+                            onClick={() => removeAddRow(row.productId)}
+                            aria-label={`Remove ${
+                              row.product?.ProductName || "product"
+                            }`}
+                          >
+                            &times;
+                          </button>
+                        </span>
+                      </div>
+                    );
+                  })}
+
+                  <div className="qa-picked__foot">
+                    <span>
+                      {addRows.length} {addRows.length === 1 ? "product" : "products"} selected
+                    </span>
+                    <span className="qa-picked__sum">
+                      &#8377;{addRowsTotal}
+                    </span>
+                  </div>
+                </div>
+              ) : null}
             </Form>
           </Modal.Body>
           <Modal.Footer>
             <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleCloseAdd}
+              disabled={addProductLoading}
+            >
+              Cancel
+            </Button>
+            <Button
               variant="primary"
               size="sm"
-              disabled={
-                !addProductId ||
-                !addQty ||
-                addQty < 1 ||
-                (selectedAddProduct && addQty > selectedAddProduct.availableStock)
-              }
+              disabled={addProductLoading || !addRowsReady}
               onClick={handleAddProduct}
             >
-              Add
-            </Button>
-          </Modal.Footer>
+              {addProductLoading
+                ? "Adding..."
+                : addRows.length > 1
+                  ? `Add ${addRows.length} products`
+                  : "Add"}
+            </Button>          </Modal.Footer>
         </Modal>
 
       </div>

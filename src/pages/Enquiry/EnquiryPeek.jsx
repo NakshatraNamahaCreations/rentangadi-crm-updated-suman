@@ -46,7 +46,7 @@ const Row = ({ label, value }) =>
     </div>
   ) : null;
 
-const EnquiryPeek = ({ enquiry, onClose }) => {
+const EnquiryPeek = ({ enquiry, onClose, stageLabel, stageTone }) => {
   if (!enquiry) {
     return (
       <aside className="eqp eqp--empty">
@@ -55,7 +55,10 @@ const EnquiryPeek = ({ enquiry, onClose }) => {
     );
   }
 
+  /* Falls back to the record's own wording when no stage is supplied. */
   const quoted = String(enquiry?.status || "").toLowerCase() === "sent";
+  const pillTone = stageTone || (quoted ? "quoted" : "open");
+  const pillText = stageLabel || (quoted ? "Quoted" : "Open");
   const phone = digits(enquiry?.clientNo);
   const email = enquiry?.email || enquiry?.clientEmail || "";
   const place = enquiry?.address || enquiry?.placeaddress || "";
@@ -66,9 +69,7 @@ const EnquiryPeek = ({ enquiry, onClose }) => {
     <aside className="eqp">
       <div className="eqp__head">
         <span className="eqp__id">#{enquiry?.enquiryId || "Enquiry"}</span>
-        <span className={`eq-pill ${quoted ? "is-quoted" : "is-open"}`}>
-          {quoted ? "Quoted" : "Open"}
-        </span>
+        <span className={`eq-pill is-${pillTone}`}>{pillText}</span>
         <button
           type="button"
           className="eqp__close"

@@ -62,9 +62,9 @@ const RecordCalendar = ({
   getRef = () => "",
   getSubtitle = () => "",
   getAmount = () => 0,
-  /* Optional. Given one, the day's total becomes a button and this is
-     called with that day - the enquiry and quotation calendars pass
-     nothing and keep a plain figure. */
+  /* Optional. Given one, the selected day's date becomes a button and this
+     is called with that day and its records - the enquiry and quotation
+     calendars pass nothing and leave the date as a heading. */
   onAmountClick = null,
   getExecutive = (r) => r?.executivename || "",
   isDone = () => false,
@@ -259,6 +259,10 @@ const RecordCalendar = ({
 
   const selectedList = byDate[selected] || [];
   const selectedMoment = moment(selected, KEY);
+
+  /* Whether the caller has somewhere to take this day. */
+  const dayOpens =
+    Boolean(onAmountClick) && selectedList.length > 0 && selectedMoment.isValid();
 
   /* Dated today or later, nearest first, each record listed only once.
 
@@ -565,11 +569,29 @@ const RecordCalendar = ({
         <div className="qc-panel">
           <div className="qc-day__head">
             <div>
-              <span className="qc-day__date">
-                {selectedMoment.isValid()
-                  ? selectedMoment.format("DD MMM YYYY")
-                  : "—"}
-              </span>
+              {dayOpens ? (
+                <button
+                  type="button"
+                  className="qc-day__date is-clickable"
+                  onClick={() =>
+                    onAmountClick({
+                      date: selectedMoment,
+                      records: selectedList,
+                    })
+                  }
+                  title={`See this day's ${
+                    selectedList.length === 1 ? one : unit
+                  } and what they are made of`}
+                >
+                  {selectedMoment.format("DD MMM YYYY")}
+                </button>
+              ) : (
+                <span className="qc-day__date">
+                  {selectedMoment.isValid()
+                    ? selectedMoment.format("DD MMM YYYY")
+                    : "—"}
+                </span>
+              )}
               <span className="qc-day__count">
                 {selectedList.length} {selectedList.length === 1 ? one : unit}
               </span>
@@ -587,43 +609,6 @@ const RecordCalendar = ({
                 </span>
               ) : null}
             </div>
-            {selectedList.length
-              ? (() => {
-                  const daySum = selectedList.reduce(
-                    (s, r) => s + (Number(api.current.getAmount(r)) || 0),
-                    0
-                  );
-                  const text = (
-                    <>
-                      &#8377;
-                      {inr(daySum)}
-                    </>
-                  );
-
-                  if (!onAmountClick) {
-                    return <span className="qc-day__sum">{text}</span>;
-                  }
-
-                  return (
-                    <button
-                      type="button"
-                      className="qc-day__sum is-clickable"
-                      onClick={() =>
-                        onAmountClick({
-                          date: selectedMoment,
-                          records: selectedList,
-                          total: daySum,
-                        })
-                      }
-                      title={`See what this ${
-                        selectedList.length === 1 ? one : unit
-                      } total is made of`}
-                    >
-                      {text}
-                    </button>
-                  );
-                })()
-              : null}
           </div>
 
           {selectedList.length ? (

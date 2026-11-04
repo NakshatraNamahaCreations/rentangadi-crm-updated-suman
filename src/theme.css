@@ -5475,13 +5475,6 @@ a {
   color: var(--db-muted, #64748B);
 }
 
-.qc-day__sum {
-  font-size: 0.875rem;
-  font-weight: 700;
-  color: var(--route-accent, #C08A2B);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
 
 /* ---- Rows ---- */
 .qc-list {
@@ -10477,38 +10470,49 @@ tr:hover > .qd-handle-cell .qd-handle {
 }
 
 /* ===========================================================================
-   Day total -> what it is made of (DayOrdersModal)
-   The calendar shows one figure per day. Where a caller passes
-   onAmountClick that figure becomes a button, and this is what opens: the
-   orders behind it, then any one order's cost breakdown, without leaving the
-   month being looked at.
+   A day -> what it is made of (DayRecordsModal)
+   Where a caller passes onAmountClick, the day's date becomes a button and
+   this is what opens: the orders behind it, then any one order's cost
+   breakdown, without leaving the month being looked at. The day's figure is
+   left off that panel - the modal states the total itself.
    =========================================================================== */
 
-/* Only the clickable variant gains affordances; the plain figure on the
-   enquiry and quotation calendars is untouched. */
-button.qc-day__sum.is-clickable {
-  padding: 3px 9px;
-  border: 1px dashed color-mix(in srgb, var(--route-accent, #C08A2B) 45%, transparent);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--route-accent, #C08A2B) 7%, transparent);
+/* It keeps the look of the heading it replaced; only the underline and the
+   cursor say it can be pressed. */
+button.qc-day__date.is-clickable {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  color: var(--db-ink, #0F172A);
+  text-align: left;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, transform 0.15s;
+  text-decoration: underline dotted
+    color-mix(in srgb, var(--route-accent, #C08A2B) 55%, transparent);
+  text-underline-offset: 3px;
+  transition: color 0.15s;
 }
 
-button.qc-day__sum.is-clickable:hover {
-  border-style: solid;
-  background: color-mix(in srgb, var(--route-accent, #C08A2B) 14%, transparent);
-  transform: translateY(-1px);
+button.qc-day__date.is-clickable:hover {
+  color: var(--route-accent, #C08A2B);
+  text-decoration-style: solid;
 }
 
-button.qc-day__sum.is-clickable:focus-visible {
+button.qc-day__date.is-clickable:focus-visible {
   outline: none;
-  border-style: solid;
+  color: var(--route-accent, #C08A2B);
+  border-radius: 6px;
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--route-accent, #C08A2B) 22%, transparent);
 }
 
-button.qc-day__sum.is-clickable:active {
-  transform: none;
+/* uq-stats is a three-column grid where it is used with three figures.
+   Only the count is left on this one, so the row sizes to it. */
+.dom-stats {
+  grid-template-columns: minmax(0, max-content);
 }
 
 /* ---- Back to the day's list ---- */
@@ -10927,4 +10931,47 @@ button.qc-day__sum.is-clickable:active {
   .qa-picked__qty {
     max-width: 92px;
   }
+}
+
+/* ---------------------------------------------------------------------------
+   Enquiry pipeline pills
+   An enquiry sits unquoted, then a quotation goes out, then the order it
+   becomes is confirmed or called off. The list shows whichever of those four
+   the record has reached.
+   --------------------------------------------------------------------------- */
+
+.eq-pill.is-pending {
+  background: #FFFBEB;
+  color: #B45309;
+}
+
+.eq-pill.is-sent {
+  background: #EFF6FF;
+  color: #1D4ED8;
+}
+
+.eq-pill.is-confirmed {
+  background: #ECFDF3;
+  color: #16A34A;
+}
+
+/* ---------------------------------------------------------------------------
+   Enquiry hero chip - the same four stages the list shows
+   The chip sits on a dark hero band, so these are brighter than the table
+   pills and keep the existing is-open/is-sent weight.
+   --------------------------------------------------------------------------- */
+
+.enq-chip.is-pending {
+  background: #FFC663;
+  color: #6B4106;
+}
+
+.enq-chip.is-confirmed {
+  background: #86EFAC;
+  color: #14532D;
+}
+
+.enq-chip.is-cancelled {
+  background: #E5E7EB;
+  color: #374151;
 }

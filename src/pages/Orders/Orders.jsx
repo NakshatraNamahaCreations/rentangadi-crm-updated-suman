@@ -20,7 +20,7 @@ import axios from "axios";
 import { ApiURL } from "../../api";
 import DatePicker from "react-datepicker";
 import RecordCalendar from "../../components/RecordCalendar";
-import DayOrdersModal from "../../components/DayOrdersModal";
+import DayRecordsModal from "../../components/DayRecordsModal";
 import "react-datepicker/dist/react-datepicker.css";
 
 const PAGE_SIZE = 10;
@@ -498,11 +498,10 @@ const Orders = () => {
               if (v === "cancelled") return "Cancelled";
               return o.orderStatus || "";
             }}
-            onAmountClick={({ date, records, total }) =>
+            onAmountClick={({ date, records }) =>
               setDayBreakdown({
                 dateLabel: date?.isValid?.() ? date.format("DD MMM YYYY") : "",
                 orders: records,
-                total,
               })
             }
             onSelect={(o) => navigate(`/orders-details/${o.id || o._id}`)}
@@ -588,12 +587,12 @@ const Orders = () => {
         </Card>
       )}
 
-      <DayOrdersModal
+      <DayRecordsModal
         show={Boolean(dayBreakdown)}
         onHide={() => setDayBreakdown(null)}
         dateLabel={dayBreakdown?.dateLabel}
-        orders={dayBreakdown?.orders || []}
-        total={dayBreakdown?.total || 0}
+        records={dayBreakdown?.orders || []}
+        variant="order"
       />
     </Container>
   );

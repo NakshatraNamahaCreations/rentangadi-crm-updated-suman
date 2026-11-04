@@ -65,8 +65,9 @@ const EnquiryDetails = () => {
 
   // Add Product Modal State
   const [showAdd, setShowAdd] = useState(false);
-  const [addProductId, setAddProductId] = useState("");
-  const [addQty, setAddQty] = useState(1);
+  /* One entry per product picked in the Add Product dialog. Several can be
+     added at once, each with its own quantity: { productId, product, qty } */
+  const [addRows, setAddRows] = useState([]);
 
   const [loading, setLoading] = useState(false);
   const [addLoading, setAddLoading] = useState(false);
@@ -181,11 +182,54 @@ const EnquiryDetails = () => {
     }
   };
 
+  /**
+   * The state of the order raised from this enquiry's quotation, read from
+   * the client's own order list.
+   *
+   * Only used when the enquiry response does not report it, which is how a
+   * cancelled job would otherwise read as merely quoted. A backend that
+   * returns `orderStatus` makes this stop happening by itself.
+   */
+  const fetchOrderState = async (data) => {
+    const quoteId = data?.quotationData?.quoteId;
+    const clientId =
+      data?.clientDetails?._id || data?.clientId?._id || data?.clientId;
+    if (!quoteId || !clientId) return null;
+
+    const res = await axios.get(`${ApiURL}/order/my-orders/${clientId}`);
+    const rows = Array.isArray(res?.data?.orderData) ? res.data.orderData : [];
+    const onThisQuote = rows.filter(
+      (o) => String(o?.quoteId || "") === String(quoteId)
+    );
+    if (!onThisQuote.length) return null;
+
+    /* A confirmed order outranks a cancelled one, so a quote re-confirmed
+       after being called off reads as confirmed. */
+    const DONE = ["confirm", "approved", "completed"];
+    const confirmed = onThisQuote.find((o) =>
+      DONE.includes(String(o?.orderStatus || "").toLowerCase())
+    );
+    return (confirmed || onThisQuote[0])?.orderStatus || null;
+  };
+
   const fetchEnquiry = async () => {
     try {
       const res = await axios.get(`${ApiURL}/enquiry/enquiry-details/${id}`);
       if (res.status === 200) {
-        setEnquiry(res.data.enrichedResponse);
+        const data = res.data.enrichedResponse;
+        setEnquiry(data);
+
+        if (data && data.orderStatus === undefined) {
+          try {
+            const orderStatus = await fetchOrderState(data);
+            if (orderStatus) {
+              setEnquiry((prev) => (prev ? { ...prev, orderStatus } : prev));
+            }
+          } catch (err) {
+            /* The stage falls back to what the quotation alone can say. */
+            console.error("Error fetching order state:", err);
+          }
+        }
       }
     } catch (error) {
       console.error("Error fetching enquiry:", error);
@@ -304,18 +348,95 @@ const EnquiryDetails = () => {
     });
   };
 
+  /**
+   * How far this enquiry got, in the same four words the enquiry list
+   * uses, so the two screens never disagree.
+   *
+   * Everything needed is already on the detail response: the quotation it
+   * raised, and the state of the order that quotation became.
+   */
+  const stage = React.useMemo(() => {
+    const orderState = String(enquiry?.orderStatus || "").toLowerCase();
+    /* The quotation document itself, not the enquiry's own `status`: that
+       field stays "sent" after a quotation is deleted, which is why this
+       page and the enquiry list disagreed. */
+    const quoted = Boolean(enquiry?.quotationData);
+
+    if (enquiry?.hasConfirmedOrder || /confirm|approved|completed/.test(orderState)) {
+      return { label: "Confirmed", tone: "confirmed" };
+    }
+    if (orderState.includes("cancel")) {
+      return { label: "Cancelled", tone: "cancelled" };
+    }
+    if (quoted) return { label: "Quotation Sent", tone: "sent" };
+    return { label: "Pending", tone: "pending" };
+  }, [enquiry]);
+
   // Add Product Modal handlers
   const handleShowAdd = () => {
     setShowAdd(true);
-    setAddProductId("");
-    setAddQty(1);
+    setAddRows([]);
   };
 
   const handleCloseAdd = () => {
     setShowAdd(false);
-    setAddProductId("");
-    setAddQty(1);
+    setAddRows([]);
   };
+
+  /**
+   * The dialog's product picker. Rows already set up keep their quantity,
+   * so adding a fourth product does not reset the three before it.
+   *
+   * Stock here is the product's own figure rather than availability over a
+   * date range: an enquiry has no confirmed dates to reserve against yet,
+   * which is what the single-product version did too.
+   */
+  const handleProductsSelect = (selectedOptions) => {
+    const pickedIds = (selectedOptions || []).map((o) => String(o.value));
+
+    setAddRows((prev) => {
+      const byId = {};
+      prev
+        .filter((r) => pickedIds.includes(String(r.productId)))
+        .forEach((r) => {
+          byId[String(r.productId)] = r;
+        });
+
+      return pickedIds.map(
+        (id) =>
+          byId[id] || {
+            productId: id,
+            product:
+              allProducts.find((p) => String(p._id) === String(id)) || null,
+            qty: 1,
+          }
+      );
+    });
+  };
+
+  const setRowQty = (productId, value) => {
+    setAddRows((prev) =>
+      prev.map((r) => {
+        if (String(r.productId) !== String(productId)) return r;
+        const raw = String(value).replace(/^0+/, "");
+        if (raw === "") return { ...r, qty: "" };
+        return { ...r, qty: Math.max(1, Number(raw) || 1) };
+      })
+    );
+  };
+
+  const removeAddRow = (productId) =>
+    setAddRows((prev) =>
+      prev.filter((r) => String(r.productId) !== String(productId))
+    );
+
+  const priceOf = (row) => Number(row?.product?.ProductPrice) || 0;
+  const stockOf = (row) => Number(row?.product?.ProductStock) || 0;
+  const lineTotalOf = (row) => (Number(row?.qty) || 0) * priceOf(row);
+
+  const addRowsReady =
+    addRows.length > 0 && addRows.every((r) => Number(r.qty) >= 1);
+  const addRowsTotal = addRows.reduce((sum, r) => sum + lineTotalOf(r), 0);
 
   // ✅ Modal options: filter out already-added ones
   const availableToAdd = allProducts.filter(
@@ -325,40 +446,41 @@ const EnquiryDetails = () => {
       )
   );
 
-  const selectedAddProduct = allProducts.find(
-    (p) => String(p._id) === String(addProductId)
-  );
 
   const handleAddProduct = async () => {
     try {
-      if (!selectedAddProduct) return;
+      if (!addRows.length || !addRowsReady) return;
 
-      const qty = Math.max(1, Number(addQty) || 1);
-      const existingIndex = (enquiry?.products || []).findIndex(
-        (p) => String(p.productId) === String(selectedAddProduct._id)
-      );
+      /* Every picked product folded in one after another, so a product
+         already on the enquiry has its quantity added to rather than being
+         listed twice - which is what the single-product version did. */
+      const updatedProducts = addRows.reduce((list, row) => {
+        const qty = Math.max(1, Number(row.qty) || 1);
+        const id = String(row.product._id);
+        const at = list.findIndex((p) => String(p.productId) === id);
 
-      let updatedProducts;
+        if (at !== -1) {
+          const existing = list[at];
+          const newQty = Number(existing.qty) + qty;
+          return list.map((p, i) =>
+            i === at
+              ? { ...p, qty: newQty, total: newQty * Number(existing.price) }
+              : p
+          );
+        }
 
-      if (existingIndex !== -1) {
-        const existing = enquiry.products[existingIndex];
-        const newQty = Number(existing.qty) + qty;
-        updatedProducts = enquiry.products.map((p) =>
-          String(p.productId) === String(selectedAddProduct._id)
-            ? { ...p, qty: newQty, total: newQty * Number(existing.price) }
-            : p
-        );
-      } else {
-        const newProduct = {
-          productId: selectedAddProduct._id,
-          name: selectedAddProduct.ProductName || selectedAddProduct.name || "",
-          stock: selectedAddProduct.ProductStock,
-          qty,
-          price: Number(selectedAddProduct.ProductPrice),
-          total: qty * Number(selectedAddProduct.ProductPrice),
-        };
-        updatedProducts = [...(enquiry.products || []), newProduct];
-      }
+        return [
+          ...list,
+          {
+            productId: row.product._id,
+            name: row.product.ProductName || row.product.name || "",
+            stock: row.product.ProductStock,
+            qty,
+            price: Number(row.product.ProductPrice),
+            total: qty * Number(row.product.ProductPrice),
+          },
+        ];
+      }, [...(enquiry?.products || [])]);
 
       const getId = (val) =>
         val && typeof val === "object" && val._id ? String(val._id) : String(val || "");
@@ -396,12 +518,19 @@ const EnquiryDetails = () => {
 
       if (res.status === 200) {
         setEnquiry((prev) => ({ ...prev, products: updatedProducts }));
-        toast.success("Product added successfully");
+        toast.success(
+          addRows.length === 1
+            ? "Product added successfully"
+            : `${addRows.length} products added successfully`
+        );
         setShowAdd(false);
-        setAddProductId("");
-        setAddQty(1);
+        setAddRows([]);
       } else {
-        toast.error("Failed to add product");
+        toast.error(
+          addRows.length === 1
+            ? "Failed to add product"
+            : "Failed to add the products"
+        );
       }
     } catch (e) {
       console.error(e);
@@ -516,14 +645,8 @@ const EnquiryDetails = () => {
               : ""}
           </span>
         </div>
-        {enquiry?.status ? (
-          <span
-            className={`enq-chip ${
-              enquiry.status === "sent" ? "is-sent" : "is-open"
-            }`}
-          >
-            {enquiry.status === "sent" ? "Quotation sent" : "Open"}
-          </span>
+        {enquiry ? (
+          <span className={`enq-chip is-${stage.tone}`}>{stage.label}</span>
         ) : null}
 
         <Dropdown className="enq-hero__menu">
@@ -1182,17 +1305,15 @@ const EnquiryDetails = () => {
                 {
                   key: "quoted",
                   label: "Quotation created",
-                  done: enquiry?.status === "sent",
-                  when:
-                    enquiry?.status === "sent" && enquiry?.quotationData?.createdAt
-                      ? moment(enquiry.quotationData.createdAt).format("DD-MM-YYYY")
-                      : "",
+                  done: Boolean(enquiry?.quotationData),
+                  when: enquiry?.quotationData?.createdAt
+                    ? moment(enquiry.quotationData.createdAt).format("DD-MM-YYYY")
+                    : "",
                 },
                 {
                   key: "confirmed",
                   label: "Order confirmed",
-                  done: String(enquiry?.followupStatus || "").toLowerCase() ===
-                    "confirmed",
+                  done: stage.label === "Confirmed",
                   when: "",
                 },
               ].map((step) => (
@@ -1218,7 +1339,7 @@ const EnquiryDetails = () => {
       </Row>
 
       {/* Add Product Modal */}
-      <Modal show={showAdd} onHide={handleCloseAdd} centered>
+      <Modal show={showAdd} onHide={handleCloseAdd} centered size="lg">
         <Modal.Header closeButton>
           <Modal.Title>Add Product</Modal.Title>
         </Modal.Header>
@@ -1227,98 +1348,122 @@ const EnquiryDetails = () => {
             <Form.Group className="mb-3" controlId="addProductSelect">
               <Form.Label>Product Name</Form.Label>
               <Select
+                isMulti
                 options={availableToAdd?.map((p) => ({
                   value: String(p._id),
                   label: p.ProductName,
                 }))}
-                value={
-                  addProductId
-                    ? availableToAdd
-                      ?.map((p) => ({
-                        value: String(p._id),
-                        label: p.ProductName,
-                      }))
-                      .find((opt) => String(opt.value) === String(addProductId))
-                    : null
-                }
-                onChange={(selected) => {
-                  setAddProductId(selected ? String(selected.value) : "");
-                  setAddQty(1);
-                }}
+                value={addRows.map((r) => ({
+                  value: String(r.productId),
+                  label: r.product?.ProductName || r.productId,
+                }))}
+                onChange={handleProductsSelect}
                 isClearable
-                placeholder="Search product..."
+                closeMenuOnSelect={false}
+                placeholder="Search products..."
+                menuPortalTarget={
+                  typeof document !== "undefined" ? document.body : null
+                }
+                styles={{
+                  menuPortal: (base) => ({ ...base, zIndex: 2000 }),
+                }}
               />
+              <Form.Text muted>
+                Pick as many as you need; each one gets its own quantity
+                below.
+              </Form.Text>
             </Form.Group>
 
-            <Row>
-              <Col xs={6}>
-                <Form.Group className="mb-3" controlId="addProductStock">
-                  <Form.Label>Stock</Form.Label>
-                  <Form.Control
-                    type="text"
-                    value={selectedAddProduct ? selectedAddProduct.ProductStock : 0}
-                    disabled
-                  />
-                </Form.Group>
-              </Col>
-              <Col xs={6}>
-                <Form.Group className="mb-3" controlId="addProductQty">
-                  <Form.Label>Quantity</Form.Label>
-                  <Form.Control
-                    type="number"
-                    min={1}
-                    value={addQty}
-                    disabled={!addProductId}
-                    onChange={(e) => {
-                      let val = e.target.value.replace(/^0+/, "");
-                      setAddQty(val === "" ? "" : Math.max(1, Number(val)));
-                    }}
-                  />
-                </Form.Group>
-              </Col>
-            </Row>
+            {addRows.length ? (
+              <div className="qa-picked">
+                <div className="qa-picked__head">
+                  <span>Product</span>
+                  <span className="text-center">Stock</span>
+                  <span className="text-center">Qty</span>
+                  <span className="text-end">Price</span>
+                  <span className="text-end">Total</span>
+                  <span />
+                </div>
 
-            <Row>
-              <Col xs={6}>
-                <Form.Group className="mb-3" controlId="addProductPrice">
-                  <Form.Label>Price</Form.Label>
-                  <Form.Control
-                    type="text"
-                    value={`₹${selectedAddProduct ? selectedAddProduct.ProductPrice : 0}`}
-                    disabled
-                  />
-                </Form.Group>
-              </Col>
-              <Col xs={6}>
-                <Form.Group className="mb-3" controlId="addProductTotal">
-                  <Form.Label>Total Price</Form.Label>
-                  <Form.Control
-                    type="text"
-                    value={
-                      selectedAddProduct
-                        ? `₹${(addQty ? addQty : 1) * selectedAddProduct.ProductPrice}`
-                        : "₹0"
-                    }
-                    disabled
-                  />
-                </Form.Group>
-              </Col>
-            </Row>
+                {addRows.map((row) => {
+                  const stock = stockOf(row);
+                  const over = Number(row.qty) > stock && stock > 0;
+
+                  return (
+                    <div key={row.productId} className="qa-picked__row">
+                      <span className="qa-picked__name">
+                        {row.product?.ProductName || "Product"}
+                        {over ? (
+                          <span className="qa-picked__warn">
+                            More than the {stock} in stock
+                          </span>
+                        ) : null}
+                      </span>
+
+                      <span className="text-center">{stock}</span>
+
+                      <span className="text-center">
+                        <Form.Control
+                          type="number"
+                          min={1}
+                          value={row.qty}
+                          onChange={(e) =>
+                            setRowQty(row.productId, e.target.value)
+                          }
+                          size="sm"
+                          className="qa-picked__qty"
+                        />
+                      </span>
+
+                      <span className="text-end">&#8377;{priceOf(row)}</span>
+                      <span className="text-end qa-picked__total">
+                        &#8377;{lineTotalOf(row)}
+                      </span>
+
+                      <span className="text-end">
+                        <button
+                          type="button"
+                          className="qa-picked__x"
+                          onClick={() => removeAddRow(row.productId)}
+                          aria-label={`Remove ${
+                            row.product?.ProductName || "product"
+                          }`}
+                        >
+                          &times;
+                        </button>
+                      </span>
+                    </div>
+                  );
+                })}
+
+                <div className="qa-picked__foot">
+                  <span>
+                    {addRows.length} {addRows.length === 1 ? "product" : "products"} selected
+                  </span>
+                  <span className="qa-picked__sum">
+                    &#8377;{addRowsTotal}
+                  </span>
+                </div>
+              </div>
+            ) : null}
           </Form>
         </Modal.Body>
         <Modal.Footer>
           <Button
             variant="primary"
             size="sm"
-            disabled={!addProductId || !addQty || addQty < 1 || addLoading}
+            disabled={!addRowsReady || addLoading}
             onClick={handleAddProduct}
           >
-            {addLoading ? "Adding..." : "Add"}
+            {addLoading
+              ? "Adding..."
+              : addRows.length > 1
+                ? `Add ${addRows.length} products`
+                : "Add"}
           </Button>
           <Button variant="secondary" size="sm" onClick={handleCloseAdd}>
             Close
-          </Button>
-        </Modal.Footer>
+          </Button>        </Modal.Footer>
       </Modal>
 
       {/* Charges section */}

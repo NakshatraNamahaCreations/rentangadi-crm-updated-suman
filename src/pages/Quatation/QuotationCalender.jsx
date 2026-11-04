@@ -14,6 +14,7 @@ import moment from "moment";
 import * as XLSX from "xlsx";
 import { ApiURL } from "../../api";
 import RecordCalendar from "../../components/RecordCalendar";
+import DayRecordsModal from "../../components/DayRecordsModal";
 import { toast } from "react-hot-toast";
 
 /* The record carries one status string. "send" means it has gone to the
@@ -46,6 +47,8 @@ const QuotationCalendar = () => {
   const [visible, setVisible] = useState([]);
   const [loading, setLoading] = useState(false);
   const [cursor, setCursor] = useState(() => moment().startOf("month"));
+  /* The day whose quotations are being looked at, or null. */
+  const [dayBreakdown, setDayBreakdown] = useState(null);
 
   useEffect(() => {
     const fetchQuotations = async () => {
@@ -168,8 +171,22 @@ const QuotationCalendar = () => {
         cellUnit="quotes"
         doneLabel="Confirmed"
         pendingLabel="Pending"
+        onAmountClick={({ date, records }) =>
+          setDayBreakdown({
+            dateLabel: date?.isValid?.() ? date.format("DD MMM YYYY") : "",
+            quotations: records,
+          })
+        }
         onSelect={(q) => navigate(`/quotation-details/${q._id}`)}
         onVisibleChange={handleVisibleChange}
+      />
+
+      <DayRecordsModal
+        show={Boolean(dayBreakdown)}
+        onHide={() => setDayBreakdown(null)}
+        dateLabel={dayBreakdown?.dateLabel}
+        records={dayBreakdown?.quotations || []}
+        variant="quotation"
       />
     </div>
   );

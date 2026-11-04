@@ -72,6 +72,39 @@ export const buildOrderItems = (order) => {
 };
 
 /**
+ * The priced lines of a quotation, taken from its first slot.
+ *
+ * Two things differ from an order. The products sit under `Products`, and
+ * the stored line `total` is price x quantity only - it does not carry the
+ * days - so unlike an order's it cannot stand in for the amount. Every
+ * multi-day line in the data was checked: all 204 store price x quantity.
+ */
+export const buildQuoteItems = (quote) => {
+  const slot = quote?.slots?.[0] || null;
+  const products = Array.isArray(slot?.Products) ? slot.Products : [];
+
+  return products.map((p) => {
+    /* Both keys occur; where both are present they always agree. */
+    const qty = safeNum(p?.quantity ?? p?.qty);
+    const unitPrice = safeNum(p?.price);
+    const days = calcDays(
+      p?.productQuoteDate || slot?.quoteDate || quote?.quoteDate,
+      p?.productEndDate || slot?.endDate || quote?.endDate
+    );
+
+    return {
+      productId: p?.productId,
+      productName: p?.productName || p?.name,
+      unitPrice,
+      quantity: qty,
+      days,
+      amount: unitPrice * qty * days,
+    };
+  });
+};
+
+
+/**
  * `discount` and `GST` are percentages on the record, not amounts.
  * Refurbishment is added into the total but has no row of its own on the
  * invoice, so it is returned separately for a caller that wants to show it.
@@ -114,4 +147,23 @@ export const computeOrderTotals = (order, items) => {
        only a fallback for a record that never stored it. */
     grandTotalToShow: safeNum(order?.GrandTotal) || computedGrandTotal,
   };
+};
+
+/**
+ * A quotation's totals, which are the same arithmetic as an order's - on
+ * purpose, so there is one money calculation here and not two. A quotation
+ * only names refurbishment differently and has no additional transportation
+ * of its own.
+ */
+export const computeQuoteTotals = (quote, items) => {
+  if (!quote) return null;
+
+  return computeOrderTotals(
+    {
+      ...quote,
+      refurbishmentAmount: quote?.refurbishment,
+      additionalTransportation: 0,
+    },
+    items || buildQuoteItems(quote)
+  );
 };
