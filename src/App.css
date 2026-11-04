@@ -1,0 +1,546 @@
+.btn-white {
+  background-color: white;
+  color: black;
+  /* border: 1px solid #ccc;  */
+}
+
+.custom-bg {
+  background-color: #F0E9EB !important;
+  color: #000 !important; /* Optional: override text color if needed */
+}
+
+.dropdown-icon {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.custom-dropdown {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  border: 1px solid #ced4da;
+  border-radius: 0.375rem;
+  padding: 0.375rem 1.25rem 0.375rem 0.75rem;
+  font-size: 14px;
+  background-color: #ffffff;
+  background-image: url("data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2020%2020%22%3E%3Cpath%20fill-rule=%22evenodd%22%20d=%22M6.293%207.293a1%201%200%200%201%201.414%200L10%2010.586l2.293-2.293a1%201%200%200%201%201.414%201.414l-3%203a1%201%200%200%201%2D1.414%200l-3%2D3a1%201%200%200%201%200%2D1.414z%22%20clip-rule=%22evenodd%22/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 20px;
+}
+
+/* Remove the default arrow from the select element */
+.custom-dropdown:focus {
+  border-color: #80bdff;
+  box-shadow: 0 0 0 0.2rem rgba(38, 143, 255, 0.25);
+}
+
+/* setting card hover */
+.hover-effect {
+  transition: all 0.3s ease;
+  cursor: pointer;
+}
+
+.hover-effect:hover {
+  background-color: #2e2c2c;
+  color: #fff;
+}
+
+.hover-effect:hover .user-icon {
+  color: #007bff;
+}
+
+/* Custom Scrollbar for Sidebar */
+.sidebar-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.sidebar-scroll::-webkit-scrollbar-track {
+  background: transparent; 
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb {
+  background-color: #888; 
+  border-radius: 10px; 
+}
+
+.sidebar-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: #555; 
+}
+
+/* Optional: For Firefox */
+.sidebar-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #888 transparent;
+}
+
+.icon-btn {
+  transition: all 0.3s ease;
+}
+
+.icon-btn:hover {
+  color: #fff;
+  /* background-color: #f8f9fa; */
+  /* border-color: #007bff; */
+}
+
+/* Pagination */
+.pagination-container {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin: 20px;
+}
+
+.pagination-info {
+  font-size: 14px;
+  color: #757575;
+  font-weight: 500;
+  margin-bottom: 10px;
+}
+
+.pagination-controls {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+
+.pagination-btn {
+  background-color: #f2f2f2;
+  border: 1px solid #d0d0d0;
+  border-radius: 50%;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s ease;
+  color: #000;
+}
+
+.pagination-btn:disabled {
+  background-color: #e0e0e0;
+  cursor: not-allowed;
+}
+
+.pagination-btn.active {
+  background-color: #5c6bc0;
+  color: #fff;
+  font-weight: bold;
+}
+
+.pagination-btn:hover:not(:disabled) {
+  background-color: #e0e0e0;
+}
+
+.pagination-btn.prev,
+.pagination-btn.next {
+  font-weight: bold;
+}
+
+.pagination-btn.page-number {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+/* Mobile responsiveness */
+@media (max-width: 576px) {
+  .pagination-container {
+    margin: 10px;
+  }
+
+  .pagination-info {
+    font-size: 12px;
+  }
+
+  .pagination-btn {
+    padding: 6px 12px;
+    font-size: 12px;
+  }
+}
+
+@media (max-width: 768px) {
+  .pagination-controls {
+    justify-content: center;
+  }
+}
+
+
+.add-btn:hover {
+  background-color: #212837 !important;
+  color: #fff !important;
+}
+
+
+
+
+.pagination-btn.active {
+  background-color: #343a40;
+  color: white;
+  border-color: #343a40;
+}
+
+
+/* =========================================================================
+   MOBILE RESPONSIVE LAYER
+   Breakpoints follow Bootstrap 5: lg = 992px, md = 768px, sm = 576px.
+   ========================================================================= */
+
+/* ---------- App shell ---------- */
+.app-shell {
+  min-height: 100vh;
+}
+
+.app-content {
+  flex: 1 1 auto;
+  /* Without this a flex child refuses to shrink, which is what pushes wide
+     tables past the viewport instead of letting .table-responsive scroll. */
+  min-width: 0;
+  margin-left: var(--rt-sidebar-w, 210px);
+}
+
+.app-sidebar {
+  top: 0;
+  left: 0;
+  z-index: 1;
+}
+
+.sidebar-close {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  line-height: 1;
+  opacity: 0.85;
+}
+
+.sidebar-backdrop {
+  display: none;
+}
+
+.header-left {
+  min-width: 0;
+}
+
+.header-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------- Below lg: sidebar becomes an off-canvas drawer ---------- */
+@media (max-width: 991.98px) {
+  .app-content {
+    margin-left: 0;
+  }
+
+  .app-sidebar {
+    z-index: 1045;
+    transform: translateX(-100%);
+    transition: transform 0.25s ease-in-out;
+    box-shadow: 0 0 24px rgba(0, 0, 0, 0.3);
+  }
+
+  .app-sidebar.is-open {
+    transform: translateX(0);
+  }
+
+  .sidebar-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    z-index: 1040;
+  }
+
+  /* Stop the whole page from scrolling sideways; wide content gets its own
+     scroll container instead (see .table-responsive / .invoice-scroll). */
+  html,
+  body {
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  .app-page {
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+  }
+
+  .app-header {
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+  }
+
+  .app-page .container,
+  .app-page .container-fluid {
+    padding-left: 0;
+    padding-right: 0;
+    max-width: 100%;
+  }
+}
+
+/* ---------- Touch targets ---------- */
+.header-menu-btn {
+  line-height: 1;
+  text-decoration: none;
+}
+
+.header-menu-btn:focus {
+  box-shadow: none;
+}
+
+/* ---------- Tables ---------- */
+/* Every table that lives in a .table-responsive wrapper should be allowed to
+   keep its natural width and pan horizontally rather than squash. */
+@media (max-width: 991.98px) {
+  .table-responsive {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .table-responsive > .table,
+  .table-responsive > table {
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 575.98px) {
+  .table,
+  .table-responsive > table {
+    font-size: 0.8125rem;
+  }
+
+  .table > :not(caption) > * > * {
+    padding: 0.45rem 0.5rem;
+  }
+}
+
+/* ---------- Invoice / print sheets ---------- */
+/* Invoice layouts are fixed-width by design (they feed html2canvas -> PDF),
+   so they pan inside a scroller instead of reflowing. */
+.invoice-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+@media (max-width: 991.98px) {
+  .invoice-scroll > .invoice-sheet {
+    min-width: 980px;
+  }
+}
+
+/* ---------- Cards, headings, filter bars ---------- */
+@media (max-width: 767.98px) {
+  .card-body {
+    padding: 1rem;
+  }
+
+  .app-page h2 {
+    font-size: 1.35rem !important;
+  }
+
+  .app-page h3 {
+    font-size: 1.2rem !important;
+  }
+
+  .app-page h4 {
+    font-size: 1.1rem !important;
+  }
+
+  .app-page h5 {
+    font-size: 1rem !important;
+  }
+
+  /* Page headers and toolbars built as a single flex row need to wrap.
+     row-gap only, so rows that do not wrap keep their original spacing. */
+  .app-page .d-flex.justify-content-between {
+    flex-wrap: wrap;
+    row-gap: 0.5rem;
+  }
+
+  /* ...but the header bar must stay on one line. */
+  .app-header.d-flex.justify-content-between {
+    flex-wrap: nowrap;
+    row-gap: 0;
+  }
+
+  /* ...and invoice sheets are fixed-width print layouts, not fluid UI. */
+  .invoice-sheet .d-flex.justify-content-between {
+    flex-wrap: nowrap;
+    row-gap: 0;
+  }
+}
+
+@media (max-width: 575.98px) {
+  /* Buttons grouped on the right of a toolbar get full width so they are
+     tappable instead of being crushed together. */
+  .app-page .btn {
+    white-space: normal;
+  }
+
+  .pagination-container {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .pagination-controls {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+}
+
+/* ---------- Forms ---------- */
+@media (max-width: 767.98px) {
+  /* react-datepicker and react-select both render fixed-ish widths that
+     overflow narrow screens. */
+  .react-datepicker-wrapper,
+  .react-datepicker__input-container,
+  .react-datepicker__input-container input {
+    width: 100% !important;
+  }
+
+  .react-datepicker-popper {
+    max-width: calc(100vw - 2rem);
+  }
+
+  /* iOS zooms the page in when a focused input is under 16px. */
+  .form-control,
+  .form-select,
+  input[type="text"],
+  input[type="email"],
+  input[type="password"],
+  input[type="number"],
+  input[type="date"],
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
+
+/* ---------- react-big-calendar ---------- */
+@media (max-width: 767.98px) {
+  .rbc-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+    font-size: 0.875rem;
+  }
+
+  .rbc-toolbar .rbc-btn-group {
+    display: flex;
+    justify-content: center;
+  }
+
+  .rbc-toolbar .rbc-btn-group > button {
+    padding: 0.3rem 0.5rem;
+    font-size: 0.8125rem;
+  }
+
+  .rbc-toolbar-label {
+    text-align: center;
+    font-weight: 600;
+  }
+
+  .rbc-header {
+    font-size: 0.6875rem;
+    padding: 4px 2px;
+  }
+
+  .rbc-event {
+    font-size: 0.6875rem;
+    padding: 1px 3px;
+  }
+
+  .rbc-date-cell {
+    font-size: 0.75rem;
+    padding-right: 3px;
+  }
+
+  /* Agenda view table is the one piece that genuinely needs to scroll. */
+  .rbc-agenda-view {
+    overflow-x: auto;
+  }
+}
+
+/* ---------- Modals ---------- */
+@media (max-width: 575.98px) {
+  .modal-dialog {
+    margin: 0.5rem;
+  }
+
+  .modal-body {
+    padding: 1rem;
+  }
+
+  .modal-footer {
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .modal-footer > .btn {
+    flex: 1 1 auto;
+    margin: 0;
+  }
+}
+
+
+
+/* ---------- Login ---------- */
+@media (max-width: 991.98px) {
+  .login-main-container {
+    flex-direction: column;
+    min-height: auto !important;
+    width: 100% !important;
+    max-width: 440px !important;
+    margin: 1rem;
+  }
+
+  .login-image-panel {
+    display: none !important;
+  }
+
+  .login-form-panel {
+    padding: 32px 24px !important;
+  }
+}
+
+@media (max-width: 575.98px) {
+  .login-form-panel {
+    padding: 24px 18px !important;
+  }
+}
+
+/* ---------- Images ---------- */
+img {
+  max-width: 100%;
+}
+
+/* ---------- List-page search toolbars ----------
+   The list pages all share one toolbar shape: a search box with an inline
+   width: 250px next to a button group. Below sm the search box takes the full
+   row and the buttons drop beneath it. */
+@media (max-width: 575.98px) {
+  .app-page > .container > .d-flex.justify-content-between > .form-control,
+  .app-page .d-flex.justify-content-between > .form-control {
+    width: 100% !important;
+    flex: 1 1 100%;
+  }
+
+  /* Same toolbar, but with the search box inside a plain wrapper div. */
+  .app-page .d-flex.justify-content-between > div:first-child > .form-control {
+    width: 100% !important;
+  }
+
+  .app-page .d-flex.justify-content-between > div:first-child:not(.d-flex) {
+    flex: 1 1 100%;
+  }
+
+  /* Keep the action buttons reachable once the row has wrapped. */
+  .app-page .d-flex.justify-content-between > .d-flex.gap-2 {
+    flex-wrap: wrap;
+  }
+}
