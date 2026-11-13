@@ -5,6 +5,7 @@ import axios from "axios";
 import toast from "react-hot-toast";
 import { FaTimes, FaPlus } from "react-icons/fa";
 import { ApiURL, ImageApiURL } from "../../api";
+import BusyButton from "../../components/BusyButton";
 
 const COLOR_OPTIONS = [
   { label: "Select Color", value: "" },
@@ -372,7 +373,7 @@ const ProductDetails = () => {
             </div>
           )}
 
-          <Button
+          <BusyButton
             onClick={handleUpload}
             disabled={uploading || selectedFiles.length === 0}
             style={{
@@ -387,7 +388,7 @@ const ProductDetails = () => {
             ) : (
               `Upload${selectedFiles.length > 0 ? ` (${selectedFiles.length})` : ""}`
             )}
-          </Button>
+          </BusyButton>
         </Card.Body>
       </Card>
     </Container>

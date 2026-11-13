@@ -5,6 +5,8 @@ import {
   FaHeadset,
   FaRegClock,
   FaCheckCircle,
+  FaTimesCircle,
+  FaFileInvoiceDollar,
   FaPlus,
   FaFileExport,
 } from "react-icons/fa";
@@ -15,11 +17,31 @@ import * as XLSX from "xlsx";
 import { toast } from "react-hot-toast";
 import { ApiURL } from "../../api";
 import RecordCalendar from "../../components/RecordCalendar";
+import {
+  STAGES,
+  STAGE_LABEL,
+  buildStageMap,
+  stageFromMap,
+  loadStageSources,
+} from "../../utils/enquiryStage";
 
-/* The record carries one status string. "sent" means a quotation has gone
-   out; anything else is still open. Only these two exist, so the calendar
-   colours and the legend use exactly them. */
-const isQuoted = (enq) => String(enq?.status || "").toLowerCase() === "sent";
+/* The same four stages the enquiry list shows, in the calendar's own two
+   palettes: `tone` names the dot and the day badge, where green is called
+   "sent" for historical reasons, and `pill` names the badge on a row, where
+   it is called "confirmed". */
+const CALENDAR_TONE = {
+  pending: "pending",
+  sent: "quoted",
+  confirmed: "confirmed",
+  cancelled: "cancelled",
+};
+
+const CALENDAR_STAGES = STAGES.map((stage) => ({
+  value: stage.value,
+  label: stage.label,
+  tone: CALENDAR_TONE[stage.value],
+  pill: `is-${stage.tone}`,
+}));
 
 const amountOf = (enq) => Number(enq?.GrandTotal ?? enq?.grandTotal) || 0;
 
@@ -42,6 +64,10 @@ const EnquiryCalender = () => {
   const [visible, setVisible] = useState([]);
   const [loading, setLoading] = useState(false);
   const [cursor, setCursor] = useState(() => moment().startOf("month"));
+  const [quotations, setQuotations] = useState([]);
+  const [orders, setOrders] = useState([]);
+  /* False until the two lists the stage is read from are in hand. */
+  const [stagesReady, setStagesReady] = useState(false);
 
   useEffect(() => {
     const fetchEnquiry = async () => {
@@ -64,20 +90,51 @@ const EnquiryCalender = () => {
     fetchEnquiry();
   }, [cursor]);
 
+  /* How far each enquiry got lives in its quotation and in the order raised
+     from that quotation, so both lists are read once - they do not change
+     with the month on screen. A list that fails costs the stage column and
+     nothing else; the calendar still draws. */
+  useEffect(() => {
+    let alive = true;
+    loadStageSources((quotes, orders, settled) => {
+      if (!alive) return;
+      setQuotations(quotes);
+      setOrders(orders);
+      /* Settled even when a list failed: the stage then falls back to
+         Pending, which is the honest answer when there is nothing to
+         read, and the page must not wait for ever. */
+      if (settled) setStagesReady(true);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const stageMap = useMemo(
+    () => buildStageMap(quotations, orders),
+    [quotations, orders]
+  );
+
+  const stageOf = useCallback(
+    (enq) => stageFromMap(stageMap, enq),
+    [stageMap]
+  );
+
   /* The calendar owns the filters and reports back what survived them, so the
      tiles and the export stay in step with what is on screen. */
   const handleVisibleChange = useCallback((rows) => setVisible(rows), []);
 
   const stats = useMemo(() => {
-    const total = visible.length;
-    const quoted = visible.filter(isQuoted).length;
+    const at = (value) => visible.filter((e) => stageOf(e) === value).length;
     return {
-      total,
-      quoted,
-      open: total - quoted,
+      total: visible.length,
+      pending: at("pending"),
+      sent: at("sent"),
+      confirmed: at("confirmed"),
+      cancelled: at("cancelled"),
       value: visible.reduce((s, e) => s + amountOf(e), 0),
     };
-  }, [visible]);
+  }, [visible, stageOf]);
 
   const handleExport = () => {
     try {
@@ -90,7 +147,7 @@ const EnquiryCalender = () => {
         "Time Slot": e?.enquiryTime || "",
         Executive: e?.executivename || "",
         "Grand Total": amountOf(e),
-        Status: isQuoted(e) ? "Quoted" : "Open",
+        Status: STAGE_LABEL[stageOf(e)] || STAGE_LABEL.pending,
       }));
       const ws = XLSX.utils.json_to_sheet(rows);
       ws["!cols"] = [
@@ -114,18 +171,36 @@ const EnquiryCalender = () => {
       tone: "blue",
     },
     {
-      key: "open",
-      label: "Open",
-      value: stats.open,
+      key: "pending",
+      label: STAGE_LABEL.pending,
+      /* A tally of stages, so it waits for them. */
+      value: stagesReady ? stats.pending : null,
       icon: FaRegClock,
       tone: "amber",
     },
     {
-      key: "quoted",
-      label: "Quoted",
-      value: stats.quoted,
+      key: "sent",
+      label: STAGE_LABEL.sent,
+      /* A tally of stages, so it waits for them. */
+      value: stagesReady ? stats.sent : null,
+      icon: FaFileInvoiceDollar,
+      tone: "violet",
+    },
+    {
+      key: "confirmed",
+      label: STAGE_LABEL.confirmed,
+      /* A tally of stages, so it waits for them. */
+      value: stagesReady ? stats.confirmed : null,
       icon: FaCheckCircle,
       tone: "green",
+    },
+    {
+      key: "cancelled",
+      label: STAGE_LABEL.cancelled,
+      /* A tally of stages, so it waits for them. */
+      value: stagesReady ? stats.cancelled : null,
+      icon: FaTimesCircle,
+      tone: "grey",
     },
   ];
 
@@ -155,6 +230,13 @@ const EnquiryCalender = () => {
         </div>
       </div>
 
+      {/* The month's enquiries are one quick call away and the calendar is
+          made of them, so it is drawn as soon as they land. How far each
+          one got needs the quotation and order lists as well, which are
+          megabytes against a backend that does not project the keys - so
+          the page no longer waits on them. stagesReady carries that down:
+          the days show their size, the pills say they are still being
+          worked out, and no status is shown before it is known. */}
       {/* ---- Stat tiles ---- */}
       <div className="eq-stats">
         {tiles.map((t) => (
@@ -164,7 +246,9 @@ const EnquiryCalender = () => {
             </span>
             <div className="eq-stat__body">
               <span className="eq-stat__label">{t.label}</span>
-              <span className="eq-stat__value">{t.value}</span>
+              <span className="eq-stat__value">
+                {t.value == null ? "—" : t.value}
+              </span>
               <span className="eq-stat__hint">{cursor.format("MMMM YYYY")}</span>
             </div>
           </div>
@@ -181,13 +265,13 @@ const EnquiryCalender = () => {
         getRef={(e) => e.enquiryId || ""}
         getSubtitle={(e) => e.enquiryTime || ""}
         getAmount={amountOf}
-        isDone={isQuoted}
+        stages={CALENDAR_STAGES}
+        stageOf={stageOf}
+        stagesReady={stagesReady}
         unit="enquiries"
         unitOne="enquiry"
         cellUnit="enquiries"
         cellUnitOne="enquiry"
-        doneLabel="Quoted"
-        pendingLabel="Open"
         onSelect={(e) => navigate(`/enquiry-details/${e._id}`)}
         onVisibleChange={handleVisibleChange}
       />

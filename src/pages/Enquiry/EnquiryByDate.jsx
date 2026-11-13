@@ -170,6 +170,7 @@ import { useNavigate, useLocation } from "react-router-dom";
 import Pagination from "../../components/Pagination";
 import axios from "axios";
 import { ApiURL } from "../../api";
+import BusyButton from "../../components/BusyButton";
 
 const EnquiryByDate = () => {
   const navigate = useNavigate();
@@ -283,14 +284,14 @@ const EnquiryByDate = () => {
           {/* Display Delete Selected Button only when there are selected rows */}
           {selectedEnquiries.length > 0 && (
             <div className="text-end mb-3">
-              <Button
+              <BusyButton
                 variant="outline-danger"
                 size="sm"
                 onClick={handleDeleteSelected}
                 style={{ marginBottom: "20px" }}
               >
                 Delete {selectedEnquiries.length} Selected Enquiries
-              </Button>
+              </BusyButton>
             </div>
           )}
 
@@ -353,14 +354,14 @@ const EnquiryByDate = () => {
                         >
                           <MdVisibility />
                         </Button>
-                        <Button
+                        <BusyButton
                           variant="outline-danger"
                           size="sm"
                           onClick={() => handleDelete(enq._id)}
                           style={{ padding: "4px 8px", fontSize: "10px" }}
                         >
                           <FaTrashAlt />
-                        </Button>
+                        </BusyButton>
                       </td>
                     </tr>
                   ))

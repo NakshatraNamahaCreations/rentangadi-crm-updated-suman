@@ -162,6 +162,7 @@ import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { ApiURL } from "../../api";
 import Pagination from "../../components/Pagination";
+import BusyButton from "../../components/BusyButton";
 
 const itemsPerPage = 10;
 
@@ -283,7 +284,7 @@ const RefurbishmentReport = () => {
           style={{ width: "300px", fontSize: "12px" }}
         />
         {selectedRows.length > 0 && (
-          <Button
+          <BusyButton
             variant="outline-danger"
             size="sm"
             onClick={handleDeleteSelected}
@@ -291,7 +292,7 @@ const RefurbishmentReport = () => {
           >
             <FaTrashAlt className="me-1" />
             Delete {selectedRows.length} Selected
-          </Button>
+          </BusyButton>
         )}
       </div>
 
@@ -366,14 +367,14 @@ const RefurbishmentReport = () => {
                         >
                           <FaEye />
                         </Button>
-                        <Button
+                        <BusyButton
                           variant="outline-danger"
                           size="sm"
                           onClick={() => handleDelete(id)}
                           style={{ padding: "4px 8px", fontSize: "10px" }}
                         >
                           <FaTrashAlt />
-                        </Button>
+                        </BusyButton>
                       </td>
                     </tr>
                   );

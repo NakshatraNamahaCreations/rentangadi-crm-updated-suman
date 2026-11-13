@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Button, Card, Container, Form, Spinner } from "react-bootstrap";
 import {
   FaTrashAlt,
@@ -23,17 +23,21 @@ import * as XLSX from "xlsx";
 import { ApiURL } from "../../api";
 import Pagination from "../../components/Pagination";
 import QuotePeek from "./QuotePeek";
+import {
+  buildOrderStateByQuote,
+  loadOrderSources,
+} from "../../utils/enquiryStage";
 import { toast } from "react-hot-toast";
+import BusyButton from "../../components/BusyButton";
 
-/* The record carries a single status string. "send" means the quote has gone
-   to the client; anything else is still being prepared. */
-const isSent = (q) => String(q?.status || "").toLowerCase() === "send";
-
-/* Cancelling a quotation sets status to "cancelled". Without this the page
-   read every non-"send" quote as pending, so a cancelled one was counted and
-   filtered as if it were still waiting to go out. */
-const isCancelled = (q) =>
+/* The record's own word for itself. It is not the whole story: an order
+   raised from a quote can be called off afterwards, and the quote then
+   still says "send" - so the page reads both, below. */
+const quoteSaysCancelled = (q) =>
   String(q?.status || "").toLowerCase() === "cancelled";
+
+const quoteSaysSent = (q) =>
+  String(q?.status || "").toLowerCase() === "send";
 
 const amountOf = (q) => Number(q?.GrandTotal ?? q?.grandTotal) || 0;
 
@@ -69,28 +73,101 @@ const Quotation = () => {
   const [selectedRows, setSelectedRows] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const [loading, setLoading] = useState(true);
+  /* quoteId -> what became of the order raised from it. */
+  const [orderState, setOrderState] = useState(() => new Map());
+  /* False until that is known. Until then a cancelled job would read as
+     confirmed, and a figure that corrects itself a few seconds later is
+     worse than one that waits. */
+  const [ordersReady, setOrdersReady] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
   const navigate = useNavigate();
 
+  /* Two reads of the same list, started together.
+
+     The shared copy the server keeps answers in about a second and carries
+     every field this table shows - the two differ by one key the table
+     never reads - so the rows are drawn from it. But it is only rebuilt
+     every couple of minutes, and a quote raised or confirmed since then
+     would read as it was. Asking for a page skips that copy and costs
+     seven seconds against the hosted backend, so it is not waited on: it
+     lands a few seconds later and quietly takes over. The table is right
+     within a second and right to the moment soon after. */
   useEffect(() => {
-    const fetchQuotations = async () => {
-      setLoading(true);
-      try {
-        const res = await axios.get(`${ApiURL}/quotations/getallquotations`);
-        if (res.status === 200) {
-          const d = res.data;
-          setQuotations(
-            Array.isArray(d) ? d : d?.quoteData || d?.data || []
-          );
-        }
-      } catch (error) {
-        console.error("Error fetching quotations:", error);
-      }
-      setLoading(false);
+    let alive = true;
+    const rowsOf = (d) =>
+      Array.isArray(d) ? d : d?.quoteData || d?.data || [];
+
+    const held = axios
+      .get(`${ApiURL}/quotations/getallquotations`)
+      .then((res) => {
+        if (!alive || res.status !== 200) return;
+        /* Only if the fresher read has not already answered. */
+        setQuotations((have) => (have.length ? have : rowsOf(res.data)));
+        setLoading(false);
+      })
+      .catch((error) => console.error("Error fetching quotations:", error));
+
+    const fresh = axios
+      .get(`${ApiURL}/quotations/getallquotations?limit=100000&page=1`)
+      .then((res) => {
+        if (!alive || res.status !== 200) return;
+        setQuotations(rowsOf(res.data));
+      })
+      .catch((error) =>
+        console.error("Error refreshing quotations:", error)
+      );
+
+    /* Even if both failed, the page must stop saying it is loading. */
+    Promise.allSettled([held, fresh]).then(() => {
+      if (alive) setLoading(false);
+    });
+
+    return () => {
+      alive = false;
     };
-    fetchQuotations();
   }, []);
+
+  /* An order called off leaves its quotation saying "send", so the orders
+     are read once and the two are put together here. A failure costs only
+     the cancelled wording; the list still shows. */
+  useEffect(() => {
+    let alive = true;
+    loadOrderSources((rows, settled) => {
+      if (!alive) return;
+      setOrderState(buildOrderStateByQuote(rows));
+      /* Settled even on failure: the page then reads the quotes' own
+         word, which is the best it can do, rather than waiting for
+         ever. */
+      if (settled) setOrdersReady(true);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  /* The table is made of the quotations, so it waits for those alone.
+     Where each one stands needs the orders list as well, and against a
+     backend that does not project quoteId that is a two-megabyte read -
+     waiting for it held every row back for half a minute. So the rows
+     show as soon as they arrive and the Status column fills in when the
+     answer does; nothing claims a stage it cannot yet know. */
+  const busy = loading;
+  const statusKnown = ordersReady;
+
+  /* Cancelled covers both: the quote withdrawn, and the order raised from
+     it called off. */
+  const isCancelled = useCallback(
+    (q) =>
+      orderState.get(String(q?.quoteId || "")) === "cancelled" ||
+      quoteSaysCancelled(q),
+    [orderState]
+  );
+
+  const isSent = useCallback(
+    (q) => !isCancelled(q) && quoteSaysSent(q),
+    [isCancelled]
+  );
 
   const stats = useMemo(() => {
     const total = quotations.length;
@@ -120,7 +197,7 @@ const Quotation = () => {
         : null;
 
     return { total, sent, pending, cancelled, value, trend };
-  }, [quotations]);
+  }, [quotations, isSent, isCancelled]);
 
   const executives = useMemo(() => {
     const set = new Set();
@@ -175,7 +252,7 @@ const Quotation = () => {
     });
 
     return rows;
-  }, [quotations, searchQuery, statusFilter, executiveFilter, fromDate, toDate, sortBy]);
+  }, [quotations, searchQuery, statusFilter, executiveFilter, fromDate, toDate, sortBy, isSent, isCancelled]);
 
   useEffect(() => {
     setCurrentPage(1);
@@ -283,7 +360,8 @@ const Quotation = () => {
     {
       key: "pending",
       label: "Pending",
-      value: stats.pending,
+      /* null, not 0: none counted yet is not the same as none. */
+      value: statusKnown ? stats.pending : null,
       hint: "Not confirmed yet",
       icon: FaRegClock,
       tone: "blue",
@@ -291,7 +369,7 @@ const Quotation = () => {
     {
       key: "sent",
       label: "Confirmed",
-      value: stats.sent,
+      value: statusKnown ? stats.sent : null,
       hint: "Confirmed by client",
       icon: FaPaperPlane,
       tone: "green",
@@ -299,7 +377,7 @@ const Quotation = () => {
     {
       key: "cancelled",
       label: "Cancelled",
-      value: stats.cancelled,
+      value: statusKnown ? stats.cancelled : null,
       hint: "Called off",
       icon: FaBan,
       tone: "grey",
@@ -346,7 +424,9 @@ const Quotation = () => {
             </span>
             <div className="eq-stat__body">
               <span className="eq-stat__label">{t.label}</span>
-              <span className="eq-stat__value">{t.value}</span>
+              <span className="eq-stat__value">
+                {busy || t.value == null ? "—" : t.value}
+              </span>
               {t.trend ? (
                 <span
                   className={`eq-trend ${t.trend.up ? "is-up" : "is-down"}`}
@@ -377,11 +457,17 @@ const Quotation = () => {
             />
           </div>
 
+          {/* Filtering by something not yet known would hide the wrong
+              rows, so it opens a second or two after the table does. */}
           <Form.Select
             className="eq-select"
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
             aria-label="Filter by status"
+            disabled={!statusKnown}
+            title={
+              statusKnown ? undefined : "Reading where each quote stands"
+            }
           >
             <option value="all">All Statuses</option>
             <option value="pending">Pending</option>
@@ -447,13 +533,13 @@ const Quotation = () => {
 
           <div className="eq-filters__end">
             {selectedRows.length > 0 ? (
-              <Button
+              <BusyButton
                 variant="outline-danger"
                 className="eq-ghost"
                 onClick={handleDeleteSelected}
               >
                 <FaTrashAlt /> Delete {selectedRows.length}
-              </Button>
+              </BusyButton>
             ) : null}
             <Button className="eq-ghost" onClick={handleExport}>
               <FaFileExport /> Export
@@ -491,7 +577,7 @@ const Quotation = () => {
                 </tr>
               </thead>
               <tbody>
-                {loading ? (
+                {busy ? (
                   <tr>
                     <td colSpan="9" className="text-center py-5">
                       <Spinner animation="border" size="sm" /> Loading quotations...
@@ -568,17 +654,32 @@ const Quotation = () => {
                         </td>
 
                         <td>
-                          <span
-                            className={`eq-pill ${
-                              cancelled
-                                ? "is-cancelled"
+                          {statusKnown ? (
+                            <span
+                              className={`eq-pill ${
+                                cancelled
+                                  ? "is-cancelled"
+                                  : sent
+                                    ? "is-quoted"
+                                    : "is-open"
+                              }`}
+                            >
+                              {cancelled
+                                ? "Cancelled"
                                 : sent
-                                  ? "is-quoted"
-                                  : "is-open"
-                            }`}
-                          >
-                            {cancelled ? "Cancelled" : sent ? "Confirmed" : "Pending"}
-                          </span>
+                                  ? "Confirmed"
+                                  : "Pending"}
+                            </span>
+                          ) : (
+                            /* Still reading the orders; a word here would be
+                               a guess, and the wrong one half the time. */
+                            <span
+                              className="eq-pill is-waiting"
+                              title="Working out where this quote stands"
+                            >
+                              &hellip;
+                            </span>
+                          )}
                         </td>
 
                         <td onClick={(e) => e.stopPropagation()}>

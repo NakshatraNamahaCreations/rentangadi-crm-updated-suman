@@ -75,6 +75,39 @@ const KINDS = {
   },
 };
 
+
+/* The day's records added together, component by component. The parts a
+   single record reports as percentages - discount and GST - are summed as
+   amounts here, since each record carries its own rate. */
+const sumTotals = (list) =>
+  list.reduce(
+    (acc, t) => ({
+      productsTotal: acc.productsTotal + t.productsTotal,
+      discountAmount: acc.discountAmount + t.discountAmount,
+      totalBeforeCharges: acc.totalBeforeCharges + t.totalBeforeCharges,
+      labour: acc.labour + t.labour,
+      transport: acc.transport + t.transport,
+      refurb: acc.refurb + t.refurb,
+      additionalTransportation:
+        acc.additionalTransportation + t.additionalTransportation,
+      totalAfterCharges: acc.totalAfterCharges + t.totalAfterCharges,
+      gstAmount: acc.gstAmount + t.gstAmount,
+      grandTotalToShow: acc.grandTotalToShow + t.grandTotalToShow,
+    }),
+    {
+      productsTotal: 0,
+      discountAmount: 0,
+      totalBeforeCharges: 0,
+      labour: 0,
+      transport: 0,
+      refurb: 0,
+      additionalTransportation: 0,
+      totalAfterCharges: 0,
+      gstAmount: 0,
+      grandTotalToShow: 0,
+    }
+  );
+
 const initialsOf = (name) => {
   const parts = String(name || "").trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return "?";
@@ -94,6 +127,10 @@ const DayRecordsModal = ({
   /* null while the day's list is showing; an id once one is opened. */
   const [openId, setOpenId] = useState(null);
   const [detail, setDetail] = useState(null);
+  /* One entry per record the day's breakdown could be read for. */
+  const [dayDetails, setDayDetails] = useState([]);
+  const [missingCount, setMissingCount] = useState(0);
+  const [dayLoading, setDayLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -102,19 +139,61 @@ const DayRecordsModal = ({
     if (!show) return;
     setOpenId(null);
     setDetail(null);
+    setDayDetails([]);
+    setMissingCount(0);
+    setDayLoading(false);
     setError("");
   }, [show, dateLabel]);
+
+  const readOne = async (id) => {
+    const res = await axios.get(kind.url(id));
+    return kind.read(res?.data);
+  };
+
+  /* What the day comes to is only on the full records - the list the
+     calendar holds carries the grand total and nothing else - so every one
+     of them is read when the day opens. One that cannot be read is left out
+     and counted, rather than quietly making the day look smaller. */
+  useEffect(() => {
+    if (!show || !records.length) return;
+
+    let cancelled = false;
+
+    const fetchDay = async () => {
+      setDayLoading(true);
+      const settled = await Promise.allSettled(
+        records.map((r) => readOne(r._id || r.id))
+      );
+      if (cancelled) return;
+
+      const got = [];
+      settled.forEach((x, i) => {
+        const record = x.status === "fulfilled" ? x.value : null;
+        if (record) got.push({ record, summary: records[i] });
+      });
+
+      setDayDetails(got);
+      setMissingCount(records.length - got.length);
+      setDayLoading(false);
+    };
+
+    fetchDay();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [show, dateLabel, variant, records]);
 
   useEffect(() => {
     if (!openId) return;
 
     let cancelled = false;
+
     const fetchRecord = async () => {
       setLoading(true);
       setError("");
       try {
-        const res = await axios.get(kind.url(openId));
-        const record = kind.read(res?.data);
+        const record = await readOne(openId);
         if (cancelled) return;
         if (!record) {
           setDetail(null);
@@ -133,9 +212,11 @@ const DayRecordsModal = ({
     };
 
     fetchRecord();
+
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [openId, variant]);
 
   const openedSummary = records.find(
@@ -143,6 +224,36 @@ const DayRecordsModal = ({
   );
   const items = detail ? kind.build(detail) : [];
   const totals = detail ? kind.compute(detail, items) : null;
+
+  /* The day as the sum of its records' own breakdowns. */
+  const dayTotals = dayDetails.length
+    ? sumTotals(
+        dayDetails.map(({ record }) => kind.compute(record, kind.build(record)))
+      )
+    : null;
+
+  /* The day in the parts the business reads it in. Transportation carries
+     both charges where a record has two; Total is what would be billed,
+     GST included, so the tax is named under it rather than left implied. */
+  const dayBoxes = [
+    {
+      label: "Total",
+      value: dayTotals?.grandTotalToShow,
+      hint: dayTotals
+        ? `incl. GST \u20B9${fmtMoney(dayTotals.gstAmount)}`
+        : "",
+    },
+    { label: "Discounts", value: dayTotals?.discountAmount },
+    { label: "Sub total / Rental", value: dayTotals?.productsTotal },
+    {
+      label: "Transportation",
+      value: dayTotals
+        ? dayTotals.transport + dayTotals.additionalTransportation
+        : null,
+    },
+    { label: "Labour", value: dayTotals?.labour },
+    { label: "Reupholstery", value: dayTotals?.refurb },
+  ];
 
   /* Only the rows the invoice prints, in its order. Refurbishment is folded
      into Total there and has no row of its own, so it only appears when the
@@ -262,6 +373,7 @@ const DayRecordsModal = ({
                 </div>
               </>
             ) : null}
+
           </>
         ) : (
           <>
@@ -272,7 +384,39 @@ const DayRecordsModal = ({
                   {records.length === 1 ? kind.one : kind.many}
                 </span>
               </div>
+
+              {/* What the day comes to, in the parts it is read in. */}
+              {dayBoxes.map((box) => (
+                <div className="uq-stat" key={box.label}>
+                  <span className="uq-stat__value">
+                    {box.value == null ? (
+                      "—"
+                    ) : (
+                      <>
+                        &#8377;
+                        {fmtMoney(box.value)}
+                      </>
+                    )}
+                  </span>
+                  <span className="uq-stat__label">{box.label}</span>
+                  {box.hint ? (
+                    <span className="dom-stat__hint">{box.hint}</span>
+                  ) : null}
+                </div>
+              ))}
             </div>
+
+            {dayLoading ? (
+              <div className="dom-note is-quiet">
+                <Spinner animation="border" size="sm" /> Adding up the day...
+              </div>
+            ) : missingCount ? (
+              <div className="dom-note">
+                {missingCount} of these could not be read, so{" "}
+                {missingCount === 1 ? "it is" : "they are"} not in the figures
+                above.
+              </div>
+            ) : null}
 
             {records.length ? (
               <div className="dom-list">

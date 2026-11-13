@@ -28,6 +28,7 @@ import { ApiURL } from "../../api";
 import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 import { toast } from "react-hot-toast";
+import BusyButton from "../../components/BusyButton";
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Tooltip, Legend);
 
@@ -539,9 +540,9 @@ const ClientReports = () => {
             <Button className="eq-ghost" onClick={handleExport}>
               <FaFileExport /> Export to Excel
             </Button>
-            <Button className="eq-primary" onClick={runReport} disabled={loading}>
+            <BusyButton className="eq-primary" onClick={runReport} disabled={loading}>
               <FaPlay /> {loading ? "Generating..." : "Generate Report"}
-            </Button>
+            </BusyButton>
           </div>
         </Card.Body>
       </Card>

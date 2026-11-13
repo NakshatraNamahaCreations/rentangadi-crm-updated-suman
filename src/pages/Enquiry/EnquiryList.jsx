@@ -20,74 +20,18 @@ import DatePicker from "react-datepicker";
 import "react-datepicker/dist/react-datepicker.css";
 import * as XLSX from "xlsx";
 import { ApiURL } from "../../api";
+import {
+  STAGES,
+  STAGE_LABEL,
+  STAGE_TONE,
+  buildStageMap,
+  stageFromMap,
+  loadStageSources,
+} from "../../utils/enquiryStage";
 import Pagination from "../../components/Pagination";
 import EnquiryPeek from "./EnquiryPeek";
 import { toast } from "react-hot-toast";
-
-/**
- * How far an enquiry has travelled.
- *
- * The record itself only says "sent"/"not send", which tells you a
- * quotation exists but nothing about what became of it. The stage follows
- * the enquiry to its quotation (quotations.enquiryId) and the quotation to
- * its order (orders.quoteId), so the list can say whether the job was
- * confirmed or called off.
- *
- * The four are exclusive, so every row shows exactly one.
- */
-const STAGES = [
-  { value: "pending", label: "Pending", tone: "pending" },
-  { value: "sent", label: "Quotation Sent", tone: "sent" },
-  { value: "confirmed", label: "Confirmed", tone: "confirmed" },
-  { value: "cancelled", label: "Cancelled", tone: "cancelled" },
-];
-
-const STAGE_LABEL = Object.fromEntries(STAGES.map((x) => [x.value, x.label]));
-const STAGE_TONE = Object.fromEntries(STAGES.map((x) => [x.value, x.tone]));
-
-/**
- * Builds enquiryId -> stage once per data load.
- * A confirmed order outranks a cancelled one, so an enquiry re-confirmed
- * after a cancellation reads as confirmed.
- */
-const buildStageMap = (quotations, orders) => {
-  const orderByQuote = new Map();
-  orders.forEach((o) => {
-    const k = String(o?.quoteId || "");
-    if (!k) return;
-    const state = String(o?.orderStatus || "").toLowerCase();
-    if (orderByQuote.get(k) === "confirm") return;
-    orderByQuote.set(k, state);
-  });
-
-  const byEnquiry = new Map();
-  quotations.forEach((q) => {
-    const k = String(q?.enquiryId ?? "");
-    if (!k) return;
-    if (!byEnquiry.has(k)) byEnquiry.set(k, []);
-    byEnquiry.get(k).push(q);
-  });
-
-  const stages = new Map();
-  byEnquiry.forEach((quotes, enquiryId) => {
-    let stage = null;
-    for (const q of quotes) {
-      const os = orderByQuote.get(String(q?.quoteId || ""));
-      if (os === "confirm") {
-        stage = "confirmed";
-        break;
-      }
-      if (os === "cancelled") stage = stage || "cancelled";
-      if (String(q?.status || "").toLowerCase() === "cancelled") {
-        stage = stage || "cancelled";
-      }
-    }
-    /* A quotation exists but nothing was ordered from it yet. */
-    stages.set(enquiryId, stage || "sent");
-  });
-
-  return stages;
-};
+import BusyButton from "../../components/BusyButton";
 
 const inr = (n) =>
   new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 }).format(
@@ -122,6 +66,8 @@ const EnquiryList = () => {
   const [sortBy, setSortBy] = useState("newest");
   const [selectedEnquiries, setSelectedEnquiries] = useState([]);
   const [loading, setLoading] = useState(true);
+  /* False until the two lists the stage is read from are in hand. */
+  const [stagesReady, setStagesReady] = useState(false);
   const navigate = useNavigate();
 
   // Row shown in the right-hand preview.
@@ -129,71 +75,48 @@ const EnquiryList = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
 
-  /**
-   * The quotation and order lists, with the two fields that link them back
-   * to an enquiry.
-   *
-   * The plain list call is cached server side and cheap, but its projection
-   * leaves out quotations.enquiryId and orders.quoteId. Asking for "full"
-   * returns whole documents, which do carry them, at about 2MB and four
-   * seconds a list - so the cheap call is tried first and the heavy one only
-   * when the keys really are missing. A backend that projects them makes the
-   * second call stop happening on its own.
-   */
-  const fetchLinked = async (path, arrayKey, linkField) => {
-    const read = async (url) => {
-      const res = await axios.get(url);
-      const rows = res?.data?.[arrayKey];
-      return Array.isArray(rows) ? rows : [];
-    };
-
-    const rows = await read(`${ApiURL}${path}`);
-    if (rows.some((r) => r?.[linkField] != null)) return rows;
-
-    /* Nothing came back carrying the link, so the projection is the older
-       one. An empty list is left alone - there is nothing to re-ask for. */
-    if (!rows.length) return rows;
-    return read(`${ApiURL}${path}?full=1`);
-  };
-
+  /* The enquiries themselves, which is what the table is made of. */
   useEffect(() => {
-    const fetchAll = async () => {
+    const fetchEnquiries = async () => {
       setLoading(true);
-
-      const [enqRes, quoteRes, orderRes] = await Promise.allSettled([
-        axios.get(`${ApiURL}/Enquiry/getallEnquiry`),
-        fetchLinked("/quotations/getallquotations", "quoteData", "enquiryId"),
-        fetchLinked("/order/getallorder", "orderData", "quoteId"),
-      ]);
-
-      if (enqRes.status === "fulfilled" && enqRes.value?.status === 200) {
-        const d = enqRes.value.data;
-        setEnquiries(Array.isArray(d) ? d : d?.data || []);
-      } else {
-        console.error("Error fetching enquiries:", enqRes.reason);
+      try {
+        const res = await axios.get(`${ApiURL}/Enquiry/getallEnquiry`);
+        if (res?.status === 200) {
+          const d = res.data;
+          setEnquiries(Array.isArray(d) ? d : d?.data || []);
+        }
+      } catch (error) {
+        console.error("Error fetching enquiries:", error);
+      } finally {
+        setLoading(false);
       }
-
-      /* A missing quotation or order list only costs the stage column; the
-         enquiries themselves still list. */
-      if (quoteRes.status === "fulfilled") setQuotations(quoteRes.value);
-      else console.error("Error fetching quotations:", quoteRes.reason);
-
-      if (orderRes.status === "fulfilled") setOrders(orderRes.value);
-      else console.error("Error fetching orders:", orderRes.reason);
-
-      setLoading(false);
     };
-    fetchAll();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    fetchEnquiries();
+  }, []);
+
+  /* How far each enquiry got is two more lists away, so the table does not
+     wait on them: the rows are on screen in about a second and the Status
+     column fills in when the answer arrives. The reader reports in as the
+     lists improve and says when they are as good as they will get. */
+  useEffect(() => {
+    let alive = true;
+    loadStageSources((quotes, orders, settled) => {
+      if (!alive) return;
+      setQuotations(quotes);
+      setOrders(orders);
+      if (settled) setStagesReady(true);
+    });
+    return () => {
+      alive = false;
+    };
   }, []);
   const stageMap = useMemo(
     () => buildStageMap(quotations, orders),
     [quotations, orders]
   );
 
-  /* No quotation was ever raised for this enquiry. */
   const stageOf = React.useCallback(
-    (enq) => stageMap.get(String(enq?.enquiryId ?? "")) || "pending",
+    (enq) => stageFromMap(stageMap, enq),
     [stageMap]
   );
 
@@ -383,7 +306,9 @@ const EnquiryList = () => {
     {
       key: "open",
       label: "Not Confirmed",
-      value: stats.open,
+      /* A tally of stages, so it holds until they are known. Counted
+         early it would read as every enquiry, which is a guess. */
+      value: stagesReady ? stats.open : null,
       hint: "Pending, quoted or cancelled",
       icon: FaRegClock,
       tone: "amber",
@@ -391,7 +316,7 @@ const EnquiryList = () => {
     {
       key: "quoted",
       label: "Confirmed",
-      value: stats.quoted,
+      value: stagesReady ? stats.quoted : null,
       hint: "Became a confirmed order",
       icon: FaCheckCircle,
       tone: "green",
@@ -437,7 +362,9 @@ const EnquiryList = () => {
             </span>
             <div className="eq-stat__body">
               <span className="eq-stat__label">{t.label}</span>
-              <span className="eq-stat__value">{t.value}</span>
+              <span className="eq-stat__value">
+                {t.value == null ? "—" : t.value}
+              </span>
               {t.trend ? (
                 <span
                   className={`eq-trend ${t.trend.up ? "is-up" : "is-down"}`}
@@ -468,11 +395,18 @@ const EnquiryList = () => {
             />
           </div>
 
+          {/* Opens a moment after the table, once the stage behind each
+              row is known; filtering on a guess would hide the wrong
+              enquiries. */}
           <Form.Select
             className="eq-select"
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
             aria-label="Filter by status"
+            disabled={!stagesReady}
+            title={
+              stagesReady ? undefined : "Reading where each enquiry stands"
+            }
           >
             <option value="all">All Status</option>
             {STAGES.map((x) => (
@@ -539,13 +473,13 @@ const EnquiryList = () => {
 
           <div className="eq-filters__end">
             {selectedEnquiries.length > 0 ? (
-              <Button
+              <BusyButton
                 variant="outline-danger"
                 className="eq-ghost"
                 onClick={handleDeleteSelected}
               >
                 <FaTrashAlt /> Delete {selectedEnquiries.length}
-              </Button>
+              </BusyButton>
             ) : null}
             <Button className="eq-ghost" onClick={handleExport}>
               <FaFileExport /> Export
@@ -642,11 +576,18 @@ const EnquiryList = () => {
                       </td>
 
                       <td>
-                        <span
-                          className={`eq-pill is-${STAGE_TONE[stage] || "pending"}`}
-                        >
-                          {STAGE_LABEL[stage] || "Pending"}
-                        </span>
+                        {stagesReady ? (
+                          <span
+                            className={`eq-pill is-${STAGE_TONE[stage] || "pending"}`}
+                          >
+                            {STAGE_LABEL[stage] || "Pending"}
+                          </span>
+                        ) : (
+                          /* Reading it still; a word here would be a guess. */
+                          <span className="eq-pill is-waiting" title="Working out where this enquiry stands">
+                            &hellip;
+                          </span>
+                        )}
                       </td>
 
                       <td onClick={(e) => e.stopPropagation()}>
@@ -712,8 +653,24 @@ const EnquiryList = () => {
 
       <EnquiryPeek
         enquiry={activeEnquiry}
-        stageLabel={activeEnquiry ? STAGE_LABEL[stageOf(activeEnquiry)] : null}
-        stageTone={activeEnquiry ? STAGE_TONE[stageOf(activeEnquiry)] : null}
+        /* While the stage is being read the rail shows the same waiting
+           chip as the row it came from. Left empty it would fall back to
+           the enquiry's own "sent" flag, which is the wording the stage
+           exists to replace. */
+        stageLabel={
+          !stagesReady
+            ? "…"
+            : activeEnquiry
+              ? STAGE_LABEL[stageOf(activeEnquiry)]
+              : null
+        }
+        stageTone={
+          !stagesReady
+            ? "waiting"
+            : activeEnquiry
+              ? STAGE_TONE[stageOf(activeEnquiry)]
+              : null
+        }
         onClose={() => setActiveId(null)}
       />
       </div>

@@ -6,6 +6,7 @@ import { config } from "../../services/config";
 import { Button } from "../../components/ui/Button";
 import { toast } from "react-hot-toast";
 import { ApiURL } from "../../api";
+import BusyButton from "../../components/BusyButton";
 
 const roleList = [
 	{ key: "dashboard", label: "Dashboard Access" },
@@ -176,9 +177,9 @@ const AdminDetails = () => {
 				</div>
 			</div>
 
-			<Button className="btn btn-primary" onClick={handleSubmit}>
+			<BusyButton className="btn btn-primary" onClick={handleSubmit}>
 				Save Rights
-			</Button>
+			</BusyButton>
 		</div>
 	);
 };

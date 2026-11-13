@@ -17,6 +17,7 @@ import "react-datepicker/dist/react-datepicker.css";
 import moment from "moment";
 import { toast } from "react-hot-toast";
 import Select from "react-select";
+import BusyButton from "../../components/BusyButton";
 
 const deliveryDismantleSlots = [
   "Select Delivery & Dismantle Slots",
@@ -854,7 +855,8 @@ const AddNewEnquiry = () => {
                 md={8}
                 className="d-flex justify-content-end gap-2 mt-3 mt-md-0"
               >
-                <Button
+                <BusyButton
+              busy={loading}
                   size="sm"
                   style={{
                     backgroundColor: "#BD5525",
@@ -866,7 +868,7 @@ const AddNewEnquiry = () => {
                   type="submit"
                 >
                   {loading ? "Submitting..." : "Submit"}
-                </Button>
+                </BusyButton>
               </Col>
             </Row>
           </Form>

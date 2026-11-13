@@ -42,6 +42,7 @@ import { toast } from "react-hot-toast";
 import DatePicker from "react-datepicker";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
+import BusyButton from "../../components/BusyButton";
 
 const labelStyle = {
   color: "#64748B",
@@ -111,6 +112,9 @@ const OrderDetails = () => {
   // Edit product states
   const [editIdx, setEditIdx] = useState(null);
   const [editQty, setEditQty] = useState(1);
+  /* The price while a row is being edited. It belongs to this order alone -
+     the product's own price in the catalogue is never touched. */
+  const [editPrice, setEditPrice] = useState(0);
 
   // Refurbishment modal states
   const [refProduct, setRefProduct] = useState("");
@@ -865,9 +869,10 @@ const OrderDetails = () => {
 
 
   // Edit product logic
-  const handleEdit = (idx, qty) => {
+  const handleEdit = (idx, qty, price) => {
     setEditIdx(idx);
     setEditQty(qty);
+    setEditPrice(Number(price) || 0);
   };
 
   const handleEditSave = async (idx) => {
@@ -926,7 +931,10 @@ const OrderDetails = () => {
         `${ApiURL}/order/updateExistingOrderById/${order._id}`,
         {
           productId: order.slots[0].products[idx].productId, // The ID of the product being updated
-          // unitPrice: productObj.ProductPrice,
+          /* This order's own price for the line. The catalogue is not
+             touched: every other order keeps the price it agreed. */
+          productPrice:
+            editPrice === "" ? undefined : Number(editPrice),
           quantity: editQty, // The new quantity
           quoteDate: order.slots[0].quoteDate, // Start date of the slot
           endDate: order.slots[0].endDate, // End date of the slot
@@ -948,7 +956,11 @@ const OrderDetails = () => {
               ? {
                 ...prod,
                 quantity: editQty, // Set the updated quantity
-                total: editQty * prod.unitPrice, // Recalculate the total based on the new quantity
+                productPrice: editPrice === "" ? prod.productPrice : Number(editPrice),
+                total:
+                  editQty *
+                  (editPrice === "" ? Number(prod.productPrice) || 0 : Number(editPrice)) *
+                  (Number(prod.days) || 1),
               }
               : prod
           )
@@ -968,6 +980,7 @@ const OrderDetails = () => {
     // Reset the editing state after successful update
     setEditIdx(null);
     setEditQty(1);
+    setEditPrice(0);
   };
 
   // // Delete product logic
@@ -1531,9 +1544,9 @@ const OrderDetails = () => {
 
           {!pdfMode && (
             <div className="qd-head__actions">
-              <Button className="eq-ghost" onClick={handleDownloadPDF}>
+              <BusyButton className="eq-ghost" onClick={handleDownloadPDF}>
                 <FaFilePdf /> PDF
-              </Button>
+              </BusyButton>
               {currentUser?.role === "superAdmin" && (
                 <Button
                   className="eq-primary"
@@ -1702,7 +1715,7 @@ const OrderDetails = () => {
                         disabled={order?.orderStatus === "cancelled"}
                       />
 
-                      <Button
+                      <BusyButton
                         variant="success"
                         size="sm"
                         onClick={handleSaveManpower}
@@ -1713,7 +1726,7 @@ const OrderDetails = () => {
                         ) : (
                           <FaCheck />
                         )}
-                      </Button>
+                      </BusyButton>
 
                       <Button
                         variant="danger"
@@ -1768,7 +1781,7 @@ const OrderDetails = () => {
                         style={{ maxWidth: "100px", height: "30px" }}
                         disabled={order && order.orderStatus === "cancelled"} // ✅ also disable input
                       />
-                      <Button
+                      <BusyButton
                         variant="success"
                         size="sm"
                         onClick={handleSaveTransport}
@@ -1781,7 +1794,7 @@ const OrderDetails = () => {
                         ) : (
                           <FaCheck />
                         )}
-                      </Button>
+                      </BusyButton>
                       <Button
                         variant="danger"
                         size="sm"
@@ -1836,13 +1849,13 @@ const OrderDetails = () => {
                         onChange={handleRoundOffChange}
                         style={{ maxWidth: "100px", height: "30px" }}
                       />
-                      <Button
+                      <BusyButton
                         variant="success"
                         size="sm"
                         onClick={handleSaveRoundOff}
                       >
                         <FaCheck className="fa-1x" />
-                      </Button>
+                      </BusyButton>
                       <Button
                         variant="danger"
                         size="sm"
@@ -1919,6 +1932,7 @@ const OrderDetails = () => {
                     {!pdfMode && <th>Remaining Stock</th>}
                     <th>Selected Qty</th>
                     <th>Days</th>
+                    {!pdfMode && <th>Product Price</th>}
                     {/* you have t comment these 2 */}
                     {/* <th>Price/Qty</th> */}
                     {/* <th>Total</th> */}
@@ -2173,6 +2187,31 @@ const OrderDetails = () => {
                           )}
                         </td>
                         <td>{prod.days}</td>
+                        {!pdfMode && (
+                          <td>
+                            {editIdx === idx ? (
+                              <Form.Control
+                                type="number"
+                                min={0}
+                                value={editPrice}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  setEditPrice(
+                                    val === "" ? "" : Math.max(0, Number(val))
+                                  );
+                                }}
+                                style={{
+                                  width: 100,
+                                  padding: "2px 6px",
+                                  fontSize: 13,
+                                }}
+                                title="Only this order changes; the product keeps its own price"
+                              />
+                            ) : (
+                              <>&#8377;{Number(prod.productPrice) || 0}</>
+                            )}
+                          </td>
+                        )}
                         {/* you have t comment these 2 */}
                         {/* <td>₹{(prod.productPrice)}</td> */}
                         {/* <td>₹{prod.productTotal}</td> */}
@@ -2181,14 +2220,14 @@ const OrderDetails = () => {
                           <td>
                             {editIdx === idx ? (
                               <>
-                                <Button
+                                <BusyButton
                                   variant="success"
                                   size="sm"
                                   style={{ padding: "2px 6px", marginRight: 4 }}
                                   onClick={() => handleEditSave(idx)}
                                 >
                                   <FaCheck />
-                                </Button>
+                                </BusyButton>
                                 <Button
                                   variant="secondary"
                                   size="sm"
@@ -2204,14 +2243,16 @@ const OrderDetails = () => {
                                   variant="link"
                                   size="sm"
                                   style={{ color: "#157347", padding: 0 }}
-                                  onClick={() => handleEdit(idx, prod.quantity)}
+                                  onClick={() =>
+                                    handleEdit(idx, prod.quantity, prod.productPrice)
+                                  }
                                   disabled={
                                     order && order.orderStatus === "cancelled"
                                   }
                                 >
                                   <FaEdit />
                                 </Button>
-                                <Button
+                                <BusyButton
                                   variant="link"
                                   size="sm"
                                   style={{
@@ -2225,7 +2266,7 @@ const OrderDetails = () => {
                                   }
                                 >
                                   <FaTrashAlt />
-                                </Button>
+                                </BusyButton>
                               </>
                             )}
                           </td>)}
@@ -2286,7 +2327,7 @@ const OrderDetails = () => {
                     disabled={order?.orderStatus === "cancelled" || isSavingRemarks}
                   />
 
-                  <Button
+                  <BusyButton
                     className="eq-primary"
                     onClick={handleUpdateRemarks}
                     disabled={order?.orderStatus === "cancelled" || isSavingRemarks}
@@ -2300,7 +2341,7 @@ const OrderDetails = () => {
                     ) : (
                       "Update"
                     )}
-                  </Button>
+                  </BusyButton>
                 </div>
               </div>
             </>
@@ -2337,7 +2378,7 @@ const OrderDetails = () => {
                 >
                   Pay Amount
                 </Button> */}
-                <Button
+                <BusyButton
                   variant="danger"
                   size="sm"
                   className="ml-auto od-cancel"
@@ -2345,7 +2386,7 @@ const OrderDetails = () => {
                   disabled={order && order.orderStatus === "cancelled"}
                 >
                   <FaBan /> Cancel Order
-                </Button>
+                </BusyButton>
               </div>
             )}
 
@@ -2360,14 +2401,14 @@ const OrderDetails = () => {
               <span className="od-sec__title">
                 <FaBoxOpen /> Inventory
               </span>
-              <Button
+              <BusyButton
                 className="eq-ghost"
                 onClick={fetchFilteredInventoryForOrder}
                 disabled={inventoryLoading}
               >
                 <FaSyncAlt />{" "}
                 {inventoryLoading ? "Fetching..." : "Refresh"}
-              </Button>
+              </BusyButton>
             </div>
 
             {inventoryError ? (
@@ -2380,48 +2421,76 @@ const OrderDetails = () => {
               <Table bordered hover responsive size="sm" style={{ background: "#fff", fontSize: 13 }}>
                 <thead className="table-light">
                   <tr>
-                    <th>Product Name</th>
-                    <th style={{ width: 200 }}>Product Icon</th>
-                    <th>Available Stock</th>
-                    <th>Under Quotations</th>
+                    <th style={{ width: 70 }}>#</th>
+                    <th>Product</th>
+                    <th style={{ width: 90 }}>Icon</th>
+                    <th style={{ width: 160 }}>Available Stock</th>
+                    <th style={{ width: 160 }}>Under Quotations</th>
                   </tr>
                 </thead>
                 <tbody>
                   {inventoryLoading ? (
                     <tr>
-                      <td colSpan={4} className="text-center">
+                      <td colSpan={5} className="text-center">
                         <Spinner animation="border" size="sm" />
                       </td>
                     </tr>
                   ) : inventoryRows.length === 0 ? (
                     <tr>
-                      <td colSpan={4} className="text-center text-muted">
+                      <td colSpan={5} className="text-center text-muted">
                         No inventory found.
                       </td>
                     </tr>
                   ) : (
-                    inventoryRows.map((item) => {
+                    inventoryRows.map((item, idx) => {
                       const prod = allProducts.find((p) => String(p._id) === String(item.productId));
                       const icon = prod?.ProductIcon;
                       return (
                         <tr key={item.productId}>
-                          <td>{item.productName}</td>
+                          <td>{idx + 1}</td>
+                          <td style={{ fontWeight: 600 }}>{item.productName}</td>
                           <td>
                             {icon ? (
                               <img
                                 src={`${icon}`}
                                 alt={item.productName}
-                                style={{ width: 90, height: 70, objectFit: "contain" }}
+                                style={{
+                                  width: 44,
+                                  height: 44,
+                                  borderRadius: 10,
+                                  objectFit: "cover",
+                                  border: "1px solid #eee",
+                                  background: "#fafafa",
+                                }}
+                                onError={(e) => {
+                                  e.currentTarget.style.display = "none";
+                                }}
                               />
                             ) : (
-                              <span className="text-muted">—</span>
+                              <div
+                                style={{
+                                  width: 44,
+                                  height: 44,
+                                  borderRadius: 10,
+                                  background: "#f1f3f5",
+                                  border: "1px solid #eee",
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  fontWeight: 800,
+                                  color: "#666",
+                                }}
+                                title="No Icon"
+                              >
+                                {String(item.productName || "P").slice(0, 1).toUpperCase()}
+                              </div>
                             )}
                           </td>
-                          <td style={{ fontWeight: 700 }}>{item.availableStock}</td>
+                          <td>{item.availableStock}</td>
                           <td
                             style={
                               item.availableStock < item.pendingQuotationQty
-                                ? { color: "red", fontWeight: 700 }
+                                ? { color: "#D97706", fontWeight: 700 }
                                 : {}
                             }
                           >
@@ -2591,7 +2660,7 @@ const OrderDetails = () => {
             >
               Cancel
             </Button>
-            <Button
+            <BusyButton
               variant="primary"
               size="sm"
               disabled={addProductLoading || !addRowsReady}
@@ -2602,7 +2671,7 @@ const OrderDetails = () => {
                 : addRows.length > 1
                   ? `Add ${addRows.length} products`
                   : "Add"}
-            </Button>          </Modal.Footer>
+            </BusyButton>          </Modal.Footer>
         </Modal>
 
       </div>

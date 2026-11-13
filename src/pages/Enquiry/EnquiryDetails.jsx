@@ -40,12 +40,13 @@ import {
   FaCubes as FaCubesAlt,
   FaPlus,
 } from "react-icons/fa";
-import { ApiURL, ImageApiURL } from "../../api";
+import { ApiURL } from "../../api";
 import { useParams, Link } from "react-router-dom";
 import axios from "axios";
 import { toast } from "react-hot-toast";
 import moment from "moment";
 import PendingQuotationsModal from "../../components/PendingQuotationsModal";
+import BusyButton from "../../components/BusyButton";
 
 const EnquiryDetails = () => {
   const { id } = useParams();
@@ -862,13 +863,23 @@ const EnquiryDetails = () => {
                     <td>{idx + 1}</td>
                     <td>
                       <div className="enq-prod">
+                        {/* ProductIcon already holds the whole address of
+                            the picture. Hanging it off the API host as
+                            /productImage/<icon> built a URL with two
+                            addresses in it, so every row showed a broken
+                            image. Every other screen uses it as it comes
+                            and this one now does too. */}
                         {getProductIconById(p.productId) ? (
                           <img
-                            src={`${ImageApiURL}/productImage/${getProductIconById(
-                              p.productId
-                            )}`}
+                            src={getProductIconById(p.productId)}
                             alt=""
                             className="enq-prod__img"
+                            /* A picture that will not load is hidden, so
+                               the row reads as one without a picture
+                               rather than showing a broken one. */
+                            onError={(e) => {
+                              e.currentTarget.style.display = "none";
+                            }}
                           />
                         ) : (
                           <span className="enq-prod__img enq-prod__img--empty">
@@ -1061,14 +1072,14 @@ const EnquiryDetails = () => {
                   <h5 style={{ margin: 0, fontWeight: 800 }}>Inventory </h5>
                 </div>
 
-                <Button
+                <BusyButton
                   size="sm"
                   variant="outline-secondary"
                   onClick={fetchFilteredInventory}
                   disabled={inventoryLoading}
                 >
                   {inventoryLoading ? "Refreshing..." : "Refresh"}
-                </Button>
+                </BusyButton>
               </div>
 
               {inventoryError ? (
@@ -1162,7 +1173,7 @@ const EnquiryDetails = () => {
                             <td
                               style={
                                 row.availableStock < row.pendingQuotationQty
-                                  ? { color: "red", fontWeight: 700 }
+                                  ? { color: "#D97706", fontWeight: 700 }
                                   : {}
                               }
                             >
@@ -1449,7 +1460,7 @@ const EnquiryDetails = () => {
           </Form>
         </Modal.Body>
         <Modal.Footer>
-          <Button
+          <BusyButton
             variant="primary"
             size="sm"
             disabled={!addRowsReady || addLoading}
@@ -1460,7 +1471,7 @@ const EnquiryDetails = () => {
               : addRows.length > 1
                 ? `Add ${addRows.length} products`
                 : "Add"}
-          </Button>
+          </BusyButton>
           <Button variant="secondary" size="sm" onClick={handleCloseAdd}>
             Close
           </Button>        </Modal.Footer>

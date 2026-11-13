@@ -6,10 +6,12 @@ import { Container, Row, Col, Table, Button } from "react-bootstrap";
 import axios from 'axios';
 import QuotationDetails from "./QuotationDetails";
 import { fmt, safeNumber } from "../../utils/numberUtils";
+import { quoteLinePrice } from "../../utils/orderTotals";
 import { parseDate } from "../../utils/parseDates";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import { safeImageToBase64 } from "../../utils/createPdf";
+import BusyButton from "../../components/BusyButton";
 
 const BRAND = [189, 85, 37]; // #BD5525
 
@@ -84,7 +86,8 @@ const QuotationInvoice = () => {
             days = isNaN(diff) || diff < 1 ? 1 : diff;
           }
 
-          const price = Number(prod.price) || 0;
+          /* What this quotation agreed, not the catalogue's current price. */
+          const price = quoteLinePrice(prod);
           const qty = Number(prod.quantity) || 0;
           const total = price * qty * days;
 
@@ -492,13 +495,13 @@ const QuotationInvoice = () => {
 
   return (
     <div className="container my-5">
-      <Button
+      <BusyButton
         onClick={handleDownloadPDF}
         variant="success"
         className="my-1 d-flex ms-auto" // ms-auto will push the button to the right
       >
         Download Quotation
-      </Button>
+      </BusyButton>
       <div className="no-print invoice-sheet" ref={invoiceRef} style={{ background: "#fff", padding: 24, borderRadius: 0, fontFamily: "Arial, sans-serif" }}>
         <h2 style={{ fontWeight: 700, marginBottom: 8, textAlign: 'center' }}>Quotation</h2>
 
@@ -558,7 +561,10 @@ const QuotationInvoice = () => {
                 </td>
                 {/* {console.log(`${idx} product: `, product)} */}
                 {/* {console.log(`"${product.ProductIcon}"`)} */}
-                <td style={{ border: "1px solid #666", padding: 8 }}>{product.price}</td>
+                {/* The agreed price, the same one the amount beside it is built
+                    from; product.price is the catalogue copy the response puts
+                    in and disagreed with that amount. */}
+                <td style={{ border: "1px solid #666", padding: 8 }}>{product.pricePerUnit}</td>
                 <td style={{ border: "1px solid #666", padding: 8 }}>{product.quantity}</td>
                 <td style={{ border: "1px solid #666", padding: 8 }}>{product.days}</td>
                 <td style={{ border: "1px solid #666", padding: 8, textAlign: "right" }}>{product.pricePerUnit * product.quantity * product.days}</td>

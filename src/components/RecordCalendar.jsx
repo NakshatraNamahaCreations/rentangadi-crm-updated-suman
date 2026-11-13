@@ -73,6 +73,19 @@ const RecordCalendar = ({
      be counted and filtered as pending. Callers that have no such state
      leave it out and the control keeps its two options. */
   isCancelled,
+  /* Optional. A caller whose records move through more states than done,
+     pending and cancelled passes them here as [{ value, label, tone }]
+     with a stageOf that names one per record; the counts, the filter, the
+     legend, the day tallies and the row pills then all follow those. */
+  stages = null,
+  stageOf = null,
+  /* False while the caller is still reading whatever stageOf needs. The
+     grid, the rows and the totals are all drawn from the records, which
+     are already in hand - only the stage is missing, so only the stage
+     waits. Days show how many they hold, the pills say they are still
+     being worked out, and filtering by status opens when it can be
+     trusted. Nothing on screen names a stage it cannot know. */
+  stagesReady = true,
   getStatusLabel,
   unit = "records",
   unitOne,
@@ -99,9 +112,79 @@ const RecordCalendar = ({
     getExecutive,
     isDone,
     isCancelled,
+    /* Without a caller's own, the trio these props have always described. */
+    stageOf:
+      stageOf ||
+      ((r) =>
+        isCancelled && isCancelled(r)
+          ? "cancelled"
+          : isDone(r)
+            ? "done"
+            : "pending"),
     getStatusLabel,
     onSelect,
     onVisibleChange,
+  };
+
+  /* The states every tally is built from. The legend and the filter have
+     always read pending first and the tallies done first, so the trio is
+     given in both orders; a caller's own states keep one order
+     throughout. */
+  const stageList = useMemo(() => {
+    if (stages?.length) return stages;
+    const trio = [
+      { value: "done", label: doneLabel, tone: "sent", pill: "is-quoted" },
+      { value: "pending", label: pendingLabel, tone: "pending", pill: "is-pending" },
+    ];
+    if (isCancelled) {
+      trio.push({
+        value: "cancelled",
+        label: cancelledLabel,
+        tone: "cancelled",
+        pill: "is-cancelled",
+      });
+    }
+    return trio;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stages, doneLabel, pendingLabel, cancelledLabel, isCancelled]);
+
+  const filterStages = useMemo(() => {
+    if (stages?.length) return stages;
+    return stageList.slice().sort((a, b) => {
+      const rank = { pending: 0, done: 1, cancelled: 2 };
+      return rank[a.value] - rank[b.value];
+    });
+  }, [stages, stageList]);
+
+  /* A tally per state, in the order they were given, leaving out the ones
+     this set does not contain. */
+  const partsOf = (list) => {
+    const a = api.current;
+    /* No stage to tally by yet, so the day reports its size and makes no
+       claim about what is in it. */
+    if (!stagesReady) {
+      return list.length
+        ? [
+            {
+              n: list.length,
+              label: list.length === 1 ? cellOne : cellMany,
+              cls: "is-waiting",
+            },
+          ]
+        : [];
+    }
+    const seen = new Map();
+    list.forEach((r) => {
+      const k = a.stageOf(r);
+      seen.set(k, (seen.get(k) || 0) + 1);
+    });
+    return stageList
+      .map((x) => ({
+        n: seen.get(x.value) || 0,
+        label: x.label,
+        cls: `is-${x.tone}`,
+      }))
+      .filter((p) => p.n > 0);
   };
 
   const one = unitOne || unit.replace(/s$/, "");
@@ -151,11 +234,9 @@ const RecordCalendar = ({
       ) {
         return false;
       }
-      const cancelled = a.isCancelled ? a.isCancelled(r) : false;
-      if (statusFilter === "done" && !a.isDone(r)) return false;
-      if (statusFilter === "cancelled" && !cancelled) return false;
-      if (statusFilter === "pending" && (a.isDone(r) || cancelled))
+      if (statusFilter !== "all" && a.stageOf(r) !== statusFilter) {
         return false;
+      }
       if (
         executiveFilter !== "all" &&
         String(a.getExecutive(r) || "").trim() !== executiveFilter
@@ -164,7 +245,7 @@ const RecordCalendar = ({
       }
       return true;
     });
-  }, [records, searchQuery, statusFilter, executiveFilter]);
+  }, [records, searchQuery, statusFilter, executiveFilter, stageOf]);
 
   /* The month belongs to the caller, which fetches by it, so on mount the
      one from the URL is handed up rather than set here. */
@@ -238,14 +319,17 @@ const RecordCalendar = ({
     return map;
   }, [visible]);
 
+  /* value -> how many of the visible records are at it. */
   const counts = useMemo(() => {
     const a = api.current;
-    const done = visible.filter((r) => a.isDone(r)).length;
-    const cancelled = a.isCancelled
-      ? visible.filter((r) => a.isCancelled(r)).length
-      : 0;
-    return { done, cancelled, pending: visible.length - done - cancelled };
-  }, [visible]);
+    const out = new Map();
+    visible.forEach((r) => {
+      const k = a.stageOf(r);
+      out.set(k, (out.get(k) || 0) + 1);
+    });
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, stageList, stageOf]);
 
   /* Six-week grid starting on the Sunday of the week the 1st falls in. */
   const weeks = useMemo(() => {
@@ -280,7 +364,7 @@ const RecordCalendar = ({
         const d = moment(key, KEY);
         if (!d.isSameOrAfter(today)) return;
         byDate[key].forEach((r) => {
-          if (a.isCancelled && a.isCancelled(r)) return;
+          if (a.stageOf(r) === "cancelled") return;
           const id = a.getId(r);
           if (seen.has(id)) return;
           seen.add(id);
@@ -288,23 +372,15 @@ const RecordCalendar = ({
         });
       });
     return out.slice(0, 4);
-  }, [byDate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [byDate, stageOf]);
 
   /* How the selected day splits across the states this caller uses. */
-  const selectedBreakdown = useMemo(() => {
-    const a = api.current;
-    const done = selectedList.filter((r) => a.isDone(r)).length;
-    const cancelled = a.isCancelled
-      ? selectedList.filter((r) => a.isCancelled(r)).length
-      : 0;
-    const pending = selectedList.length - done - cancelled;
-    return [
-      { n: done, label: doneLabel, cls: "is-sent" },
-      { n: pending, label: pendingLabel, cls: "is-pending" },
-      { n: cancelled, label: cancelledLabel, cls: "is-cancelled" },
-    ].filter((p) => p.n > 0);
+  const selectedBreakdown = useMemo(
+    () => partsOf(selectedList),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedList, doneLabel, pendingLabel, cancelledLabel]);
+    [selectedList, stageList, stageOf, stagesReady]
+  );
 
   const step = (delta) => {
     const next = cursor.clone().add(delta, "month");
@@ -321,7 +397,8 @@ const RecordCalendar = ({
     const a = api.current;
     const ref = a.getRef(r);
     const sub = a.getSubtitle(r);
-    const done = a.isDone(r);
+    const at = stagesReady ? a.stageOf(r) : null;
+    const stage = stageList.find((x) => x.value === at);
     return (
       <li key={String(a.getId(r)) + "-" + i}>
         <button type="button" className="qc-row" onClick={() => a.onSelect?.(r)}>
@@ -334,10 +411,21 @@ const RecordCalendar = ({
             </span>
           </span>
           <span className="qc-row__amount">&#8377;{inr(a.getAmount(r))}</span>
-          <span className={`eq-pill ${done ? "is-quoted" : "is-open"}`}>
-            {/* A record may carry its own wording; the tone still follows isDone. */}
-            {a.getStatusLabel?.(r) || (done ? doneLabel : pendingLabel)}
-          </span>
+          {/* A record may carry its own wording; the tone follows its state. */}
+          {stagesReady ? (
+            <span
+              className={`eq-pill ${stage?.pill || `is-${stage?.tone || "pending"}`}`}
+            >
+              {a.getStatusLabel?.(r) || stage?.label || pendingLabel}
+            </span>
+          ) : (
+            <span
+              className="eq-pill is-waiting"
+              title="Working out where this stands"
+            >
+              &hellip;
+            </span>
+          )}
           <FaGo className="qc-row__go" />
         </button>
       </li>
@@ -412,14 +500,17 @@ const RecordCalendar = ({
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
             aria-label="Filter by status"
+            disabled={!stagesReady}
+            title={
+              stagesReady ? undefined : "Reading where each one stands"
+            }
           >
             <option value="all">All Status</option>
-            <option value="pending">{pendingLabel}</option>
-            <option value="done">{doneLabel}</option>
-            {/* Only offered where the caller has such a state. */}
-            {isCancelled ? (
-              <option value="cancelled">{cancelledLabel}</option>
-            ) : null}
+            {filterStages.map((x) => (
+              <option key={x.value} value={x.value}>
+                {x.label}
+              </option>
+            ))}
           </Form.Select>
           <Form.Select
             className="eq-select"
@@ -437,17 +528,12 @@ const RecordCalendar = ({
         </div>
 
         <div className="qc-legend">
-          <span>
-            <i className="is-pending" /> {pendingLabel} {counts.pending}
-          </span>
-          <span>
-            <i className="is-sent" /> {doneLabel} {counts.done}
-          </span>
-          {isCancelled ? (
-            <span>
-              <i className="is-cancelled" /> {cancelledLabel} {counts.cancelled}
+          {filterStages.map((x) => (
+            <span key={x.value}>
+              <i className={`is-${x.tone}`} /> {x.label}{" "}
+              {stagesReady ? counts.get(x.value) || 0 : "—"}
             </span>
-          ) : null}
+          ))}
         </div>
 
         {loading ? (
@@ -466,29 +552,14 @@ const RecordCalendar = ({
               const key = day.format(KEY);
               const rows = byDate[key] || [];
               const outside = day.month() !== cursor.month();
-              const a = api.current;
-              const doneCount = rows.filter((r) => a.isDone(r)).length;
-              const cancelledCount = a.isCancelled
-                ? rows.filter((r) => a.isCancelled(r)).length
-                : 0;
-              const pendingCount = rows.length - doneCount - cancelledCount;
-
               /* The day's own tally, in the caller's wording. Only the states
                  that actually occur on the day are listed, so a day of one
                  kind still reads as a single line. */
-              const parts = [
-                { n: doneCount, label: doneLabel, cls: "is-sent" },
-                { n: pendingCount, label: pendingLabel, cls: "is-pending" },
-                { n: cancelledCount, label: cancelledLabel, cls: "is-cancelled" },
-              ].filter((p) => p.n > 0);
+              const parts = partsOf(rows);
 
-              const tone = rows.length
-                ? doneCount === rows.length
-                  ? "is-sent"
-                  : cancelledCount === rows.length
-                    ? "is-cancelled"
-                    : "is-pending"
-                : "";
+              /* A day of one state takes that state's tint; a mixed day
+                 reads as pending. */
+              const tone = parts.length === 1 ? parts[0].cls : rows.length ? "is-pending" : "";
               return (
                 <button
                   type="button"

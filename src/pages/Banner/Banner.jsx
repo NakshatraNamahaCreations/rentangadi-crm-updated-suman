@@ -11,6 +11,7 @@ import { ApiURL, ImageApiURL } from "../../api";
 import Pagination from "../../components/Pagination";
 import axios from "axios";
 import { toast } from "react-hot-toast";
+import BusyButton from "../../components/BusyButton";
 
 /**
  * App banners.
@@ -234,13 +235,13 @@ const Banner = () => {
 
           <div className="eq-filters__end">
             {selectedRows.length > 0 ? (
-              <Button
+              <BusyButton
                 variant="outline-danger"
                 className="eq-ghost"
                 onClick={handleDeleteSelected}
               >
                 <FaTrashAlt /> Delete {selectedRows.length}
-              </Button>
+              </BusyButton>
             ) : null}
           </div>
         </Card.Body>
@@ -378,13 +379,13 @@ const Banner = () => {
           >
             Cancel
           </Button>
-          <Button
+          <BusyButton
             className="eq-primary"
             onClick={handleAddBanner}
             disabled={uploading}
           >
             {uploading ? "Uploading..." : "Upload"}
-          </Button>
+          </BusyButton>
         </Modal.Footer>
       </Modal>
     </div>

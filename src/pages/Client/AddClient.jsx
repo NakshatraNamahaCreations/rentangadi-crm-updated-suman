@@ -12,6 +12,7 @@ import { FaPlusCircle, FaTrashAlt } from "react-icons/fa";
 import axios from "axios";
 import { ApiURL } from "../../api";
 import { useNavigate } from "react-router-dom";
+import BusyButton from "../../components/BusyButton";
 
 const AddClient = () => {
   // const randomNum = Math.floor(Math.random() * 1000);
@@ -311,7 +312,8 @@ const AddClient = () => {
               />
             </Form.Group>
 
-            <Button
+            <BusyButton
+              busy={loading}
               type="submit"
               className="w-100 py-2 rounded-3"
               style={{
@@ -323,7 +325,7 @@ const AddClient = () => {
               disabled={loading}
             >
               {loading ? "Adding..." : "Add Client"}
-            </Button>
+            </BusyButton>
 
             {successMessage && (
               <div

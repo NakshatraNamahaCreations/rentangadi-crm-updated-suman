@@ -18,6 +18,7 @@ import "react-datepicker/dist/react-datepicker.css";
 import moment from "moment";
 import { toast } from "react-hot-toast";
 import Select from "react-select";
+import BusyButton from "../../components/BusyButton";
 
 const deliveryDismantleSlots = [
   "Select Delivery & Dismantle Slots",
@@ -894,7 +895,8 @@ const EditEnquiry = () => {
                   Cancel
                 </Button>
 
-                <Button
+                <BusyButton
+              busy={saving}
                   size="sm"
                   style={{ backgroundColor: "#BD5525", border: "none" }}
                   className="add-btn"
@@ -902,7 +904,7 @@ const EditEnquiry = () => {
                   type="submit"
                 >
                   {saving ? "Updating..." : "Update"}
-                </Button>
+                </BusyButton>
               </Col>
             </Row>
           </Form>

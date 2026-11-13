@@ -8,6 +8,7 @@ import { ApiURL, ImageApiURL } from "../../api";
 import axios from "axios";
 import * as XLSX from "xlsx";
 import { toast, Toaster } from "react-hot-toast";
+import BusyButton from "../../components/BusyButton";
 
 const AddProduct = () => {
   const navigate = useNavigate();
@@ -582,7 +583,8 @@ const AddProduct = () => {
             </Form.Group>
 
             {/* Add/Update Product Button */}
-            <Button
+            <BusyButton
+              busy={loading}
               type="submit"
               className="w-100 py-2 rounded-3"
               style={{
@@ -601,7 +603,7 @@ const AddProduct = () => {
                 : isEditMode
                   ? "Update Product"
                   : "Add Product"}
-            </Button>
+            </BusyButton>
 
             {/* Success Message */}
             {successMessage && (

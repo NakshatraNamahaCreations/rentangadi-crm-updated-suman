@@ -32,6 +32,7 @@ import {
   compactInr,
 } from "./paymentFields";
 import { toast } from "react-hot-toast";
+import BusyButton from "../../components/BusyButton";
 
 const PaymentReport = () => {
   const [payments, setPayments] = useState([]);
@@ -393,13 +394,13 @@ const PaymentReport = () => {
               <FaUndo /> Reset
             </Button>
             {selectedRows.length > 0 ? (
-              <Button
+              <BusyButton
                 variant="outline-danger"
                 className="eq-ghost"
                 onClick={handleDeleteSelected}
               >
                 <FaTrashAlt /> Delete {selectedRows.length}
-              </Button>
+              </BusyButton>
             ) : null}
             <Button className="eq-ghost" onClick={handleDownloadExcel}>
               <FaFileExport /> Excel

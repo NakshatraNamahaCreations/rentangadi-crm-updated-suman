@@ -6,6 +6,7 @@ import { toast } from "react-hot-toast";
 import { ApiURL, ImageApiURL } from "../../api";
 import Pagination from "../../components/Pagination";
 import MasterThumb from "./MasterThumb";
+import BusyButton from "../../components/BusyButton";
 
 /**
  * Product sub-categories.
@@ -276,13 +277,13 @@ const SubCategory = () => {
 
           <div className="eq-filters__end">
             {selectedRows.length > 0 ? (
-              <Button
+              <BusyButton
                 variant="outline-danger"
                 className="eq-ghost"
                 onClick={handleDeleteSelected}
               >
                 <FaTrashAlt /> Delete {selectedRows.length}
-              </Button>
+              </BusyButton>
             ) : null}
             <Button
               className="eq-primary"
@@ -505,13 +506,13 @@ const SubCategory = () => {
           >
             Cancel
           </Button>
-          <Button
+          <BusyButton
             className="eq-primary"
             onClick={handleAddSubCategory}
             disabled={saving}
           >
             {saving ? "Saving..." : isEditing ? "Update" : "Add"}
-          </Button>
+          </BusyButton>
         </Modal.Footer>
       </Modal>
     </>

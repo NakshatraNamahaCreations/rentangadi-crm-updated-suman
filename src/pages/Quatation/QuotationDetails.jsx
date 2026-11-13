@@ -37,13 +37,16 @@ import {
   FaFlagCheckered,
   FaBookmark,
   FaGripVertical,
+  FaBoxOpen,
 } from "react-icons/fa";
 import { toast } from "react-hot-toast";
+import { computeQuoteTotals, quoteLinePrice } from "../../utils/orderTotals";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 import DatePicker from "react-datepicker";
 import { useLocation, useNavigate } from "react-router-dom";
 import { parseDate } from "../../utils/parseDates";
+import BusyButton from "../../components/BusyButton";
 // import RelatedEnquiries from "../Enquiry/RelatedEnquiries"
 
 const formatDateToDDMMYYYY = (date) => {
@@ -84,6 +87,9 @@ const QuotationDetails = () => {
   const [getPayment, setGetPayment] = useState("");
   const [editIdx, setEditIdx] = useState(null);
   const [editQty, setEditQty] = useState(1);
+  /* The price while a row is being edited. It belongs to this quotation
+     alone - the product's own price in the catalogue is never touched. */
+  const [editPrice, setEditPrice] = useState(0);
   const [productDates, setProductDates] = useState({});
   const [items, setItems] = useState([]);
   const [editMode, setEditMode] = useState(false);
@@ -112,6 +118,11 @@ const QuotationDetails = () => {
   /* The dates the inventory figures were fetched for, shown in the
      breakdown so it is clear which window the numbers cover. */
   const [inventoryRange, setInventoryRange] = useState({ startDate: "", endDate: "" });
+  /* What became of the order raised from this quote, if there is one. The
+     quote's own status says "send" for ever once an order exists, even
+     after that order is called off - which is why this page read Confirmed
+     while the list beside it read Cancelled. */
+  const [orderState, setOrderState] = useState(null);
   /* The stock row whose quotation breakdown is open, or null. */
   const [underQuotationsRow, setUnderQuotationsRow] = useState(null);
 
@@ -131,6 +142,39 @@ const QuotationDetails = () => {
     }
   };
 
+
+  /**
+   * Reads this client's orders and keeps the state of the ones raised from
+   * this quote. A client's own list is small and already served; the whole
+   * order list would be megabytes for two fields.
+   */
+  const fetchOrderState = async (quoteData) => {
+    const quoteId = quoteData?.quoteId;
+    const clientId = quoteData?.clientId?._id || quoteData?.clientId;
+    if (!quoteId || !clientId) return;
+
+    try {
+      const res = await axios.get(`${ApiURL}/order/my-orders/${clientId}`);
+      const rows = Array.isArray(res?.data?.orderData) ? res.data.orderData : [];
+      const mine = rows.filter(
+        (o) => String(o?.quoteId || "") === String(quoteId)
+      );
+      if (!mine.length) return;
+
+      /* A confirmed order outranks a cancelled one, so a quote re-confirmed
+         after being called off reads as confirmed. */
+      const DONE = ["confirm", "approved", "completed"];
+      const confirmed = mine.find((o) =>
+        DONE.includes(String(o?.orderStatus || "").toLowerCase())
+      );
+      setOrderState(
+        String((confirmed || mine[0])?.orderStatus || "").toLowerCase()
+      );
+    } catch (err) {
+      /* The page falls back to what the quote itself says. */
+      console.error("Error fetching the order's state:", err);
+    }
+  };
 
   const getInventoryFilterPayloadFromQuote = (quoteData) => {
     try {
@@ -197,6 +241,13 @@ const QuotationDetails = () => {
     }
     if (quotation) fetchInventoryFromQuoteData(quotation);
   }, [quotation]);
+
+  /* Only the quote id and the client matter here, so this does not re-run
+     as the person edits rows. */
+  useEffect(() => {
+    if (quotation) fetchOrderState(quotation);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quotation?.quoteId, quotation?.clientId]);
 
   useEffect(() => {
     const fetchQuotation = async () => {
@@ -294,7 +345,7 @@ const QuotationDetails = () => {
                 image: prod.ProductIcon,
                 units: prod.quantity || prod.qty,
                 days,
-                pricePerUnit: Number(prod.price) || 0,
+                pricePerUnit: quoteLinePrice(prod),
                 amount: Number(prod.total) || 0,
                 available: resolvedAvailable,
                 quoteDate,
@@ -564,6 +615,10 @@ const QuotationDetails = () => {
               productId: product.productId,
               productName: product.productName,
               quantity: product.quantity || product.qty,
+              /* What this quotation agreed. Without it the order would be
+                 priced from the catalogue and the client would be charged
+                 something other than the figure they were quoted. */
+              productPrice: quoteLinePrice(product),
               total: product.total,
             })),
           })) || [], // Default to empty array if no slots found
@@ -607,6 +662,8 @@ const QuotationDetails = () => {
                 productId: product.productId,
                 productName: product.productName,
                 quantity: product.quantity || product.qty,
+                /* As above: the quoted price travels with the line. */
+                productPrice: quoteLinePrice(product),
                 total: product.total,
                 // Inject additional product data if found in x
                 productQuoteDate: formatDateToDDMMYYYY(productData?.productQuoteDate) || quotation.quoteDate,
@@ -882,13 +939,16 @@ const QuotationDetails = () => {
       Products: (slot.Products || []).map((p) => {
         const pd = productDates[p.productId] || {};
         const qty = Number(p.qty || p.quantity || 0);
+        /* The price this line agreed, read from its own total - never the
+           catalogue copy the response puts in its place. */
+        const price = quoteLinePrice(p);
         return {
           productId: p.productId,
           productName: p.productName,
           qty,
           quantity: qty,
-          price: p.price,
-          total: p.total || qty * (p.price || 0),
+          price,
+          total: p.total || qty * price,
           productQuoteDate:
             formatDateToDDMMYYYY(pd.productQuoteDate) ||
             p.productQuoteDate ||
@@ -1088,10 +1148,25 @@ const QuotationDetails = () => {
   //   setEditQty(qty);
   // };
 
+  /**
+   * Where this quotation stands, in the same three words the quotation list
+   * uses - so the two screens never disagree.
+   */
+  const stage = React.useMemo(() => {
+    if (orderState === "cancelled" || quotation?.status === "cancelled") {
+      return { label: "Cancelled", pill: "is-cancelled" };
+    }
+    if (quotation?.status === "send") {
+      return { label: "Confirmed", pill: "is-quoted" };
+    }
+    return { label: "Pending", pill: "is-open" };
+  }, [orderState, quotation?.status]);
+
   const handleEdit = (idx, qty, item) => {
     console.log(`handleEdit `, idx, qty, item);
     setEditIdx(idx);
     setEditQty(qty);
+    setEditPrice(item?.pricePerUnit || 0);
 
     // preload current values into draft
     setEditDraft((prev) => ({
@@ -1172,7 +1247,7 @@ const QuotationDetails = () => {
   //   setEditQty(1);
   // };
 
-  const handleEditSave = (item) => {
+  const handleEditSave = async (item) => {
     const draft = editDraft[item.productId];
     if (!draft) return;
 
@@ -1195,6 +1270,13 @@ const QuotationDetails = () => {
       },
     }));
 
+    /* A blank or negative price would silently zero the line, so it falls
+       back to what the row charged before. */
+    const nextPrice =
+      Number(editPrice) >= 0 && editPrice !== ""
+        ? Number(editPrice)
+        : Number(item.pricePerUnit) || 0;
+
     // update slots inside quotation
     const updatedSlots = quotation.slots.map((slot) => ({
       ...slot,
@@ -1204,7 +1286,8 @@ const QuotationDetails = () => {
             ...prod,
             qty: editQty,
             quantity: editQty,
-            total: editQty * (prod.price || item.pricePerUnit),
+            price: nextPrice,
+            total: editQty * nextPrice,
             productQuoteDate: formatDateToDDMMYYYY(draft.productQuoteDate),
             productEndDate: formatDateToDDMMYYYY(draft.productEndDate),
             productSlot: draft.productSlot,
@@ -1219,7 +1302,10 @@ const QuotationDetails = () => {
         ? {
           ...row,
           quantity: editQty,
-          total: editQty * row.pricePerUnit,
+          pricePerUnit: nextPrice,
+          /* What the table and the cost summary add up, per day. */
+          amount: editQty * nextPrice,
+          total: editQty * nextPrice,
           productQuoteDate: formatDateToDDMMYYYY(draft.productQuoteDate),
           productEndDate: formatDateToDDMMYYYY(draft.productEndDate),
           productSlot: draft.productSlot,
@@ -1228,11 +1314,26 @@ const QuotationDetails = () => {
     );
 
     setItems(updatedItems);
-    setQuotation({ ...quotation, slots: updatedSlots });
+
+    const nextQuotation = { ...quotation, slots: updatedSlots };
+    setQuotation(nextQuotation);
+
+    /* Written to the server straight away. A tick that only changed the
+       screen read as saved, and a reload took the change back; the record
+       is what the person was looking at, so it is what is kept.
+
+       The grand total is recomputed here because the one on the record is
+       only refreshed while the table renders, which has not happened yet. */
+    const totals = computeQuoteTotals({ ...nextQuotation, GrandTotal: 0 });
+
+    /* Awaited, so the tick spins while the server is answering and the row
+       stays open until the change is really kept. */
+    await handleUpdateQuotation(nextQuotation, totals?.grandTotalToShow);
 
     // clear edit mode
     setEditIdx(null);
     setEditQty(1);
+    setEditPrice(0);
     setEditDraft((prev) => {
       const copy = { ...prev };
       delete copy[item.productId];
@@ -1243,6 +1344,7 @@ const QuotationDetails = () => {
   const handleCancelEdit = (productId) => {
     setEditIdx(null);
     setEditQty(1);
+    setEditPrice(0);
 
     setEditDraft((prev) => {
       const copy = { ...prev };
@@ -1300,11 +1402,31 @@ const QuotationDetails = () => {
   };
 
   // Update only changed fields (top-level charges and per-product values)
-  const handleUpdateQuotation = async () => {
+  /**
+   * Writes a quotation to the server.
+   *
+   * `source` is the quotation to send. A caller that has just changed a row
+   * passes the changed copy, because React state is not yet updated when
+   * its handler runs - sending the state here would save the row as it was
+   * a moment ago. `grandTotal` is likewise passed in by such a caller: the
+   * one on the record is only recomputed while the table renders.
+   */
+  /* Saves what is on screen. The row tick calls it with the record it has
+     just changed, so the new figure is saved without waiting for a
+     re-render; everything else calls it with nothing and the record on
+     screen is used.
+
+     A button hands its click event to the first parameter, which is how
+     this once came to save an event instead of a quotation and sent the
+     request to /update-quotation/undefined. Anything without an id is
+     therefore not a quotation and is ignored. */
+  const handleUpdateQuotation = async (override, grandTotal) => {
+    const source = override && override._id ? override : null;
+    const working = source || quotation;
     try {
       setLoading(true)
       // Reuse our single diff source of truth
-      const changed = hasUnsavedChanges();
+      const changed = source ? true : hasUnsavedChanges();
       if (!changed) {
         toast.success("No changes to update");
         return true; // allow navigation (e.g., invoice) to proceed
@@ -1312,25 +1434,27 @@ const QuotationDetails = () => {
 
       // Build a safe, explicit payload that reflects the current UI state,
       // so deletions/additions/edits are persisted.
-      const slotsPayload = (quotation?.slots || []).map((slot) => ({
+      const slotsPayload = (working?.slots || []).map((slot) => ({
         slotName: slot.slotName,
         quoteDate: slot.quoteDate,
         endDate: slot.endDate,
         Products: (slot.Products || []).map((p) => {
           const pd = productDates[p.productId] || {};
           const productQuoteDate =
-            formatDateToDDMMYYYY(pd.productQuoteDate) || p.productQuoteDate || slot.quoteDate || quotation.quoteDate;
+            formatDateToDDMMYYYY(pd.productQuoteDate) || p.productQuoteDate || slot.quoteDate || working.quoteDate;
           const productEndDate =
-            formatDateToDDMMYYYY(pd.productEndDate) || p.productEndDate || slot.endDate || quotation.endDate;
-          const productSlot = pd.productSlot || p.productSlot || quotation.quoteTime || slot.quoteTime || null;
+            formatDateToDDMMYYYY(pd.productEndDate) || p.productEndDate || slot.endDate || working.endDate;
+          const productSlot = pd.productSlot || p.productSlot || working.quoteTime || slot.quoteTime || null;
           const qty = p.qty || p.quantity || 0;
-          const total = p.total || qty * (p.price || 0);
+          /* As above: the line's own price, not the catalogue's. */
+          const price = quoteLinePrice(p);
+          const total = p.total || qty * price;
           return {
             productId: p.productId,
             productName: p.productName,
             qty,
             quantity: qty,
-            price: p.price,
+            price,
             total,
             productQuoteDate,
             productEndDate,
@@ -1341,27 +1465,29 @@ const QuotationDetails = () => {
       }));
 
       const payload = {
-        enquiryObjectId: quotation._id,
-        enquiryId: quotation.enquiryId,
-        status: quotation?.status,
-        discount: Number(quotation?.discount || 0),
-        transportcharge: Number(quotation?.transportcharge || 0),
-        labourecharge: Number(quotation?.labourecharge || 0),
-        refurbishment: Number(quotation?.refurbishment || 0),
-        GST: Number(quotation?.GST || 0),
-        GrandTotal: Number(quotation?.finalTotal || quotation?.GrandTotal || 0),
+        enquiryObjectId: working._id,
+        enquiryId: working.enquiryId,
+        status: working?.status,
+        discount: Number(working?.discount || 0),
+        transportcharge: Number(working?.transportcharge || 0),
+        labourecharge: Number(working?.labourecharge || 0),
+        refurbishment: Number(working?.refurbishment || 0),
+        GST: Number(working?.GST || 0),
+        GrandTotal: Number(
+          grandTotal ?? working?.finalTotal ?? working?.GrandTotal ?? 0
+        ),
         slots: slotsPayload,
       };
 
       console.log("Submitting minimal quotation changes:", { ...payload, Products: payload?.slots[0]?.Products });
 
       const response = await axios.put(
-        `${ApiURL}/quotations/update-quotation/${quotation._id}`,
+        `${ApiURL}/quotations/update-quotation/${working._id}`,
         payload
       );
       if (response.status === 200) {
         toast.success("Quotation updated successfully");
-        originalQuotationRef.current = JSON.parse(JSON.stringify(quotation || {}));
+        originalQuotationRef.current = JSON.parse(JSON.stringify(working || {}));
         // reload after qt updated sucfly
         // ***DO NOT reload***
         // we're updating & navigating to invoice page, so if we reload we're never navigating
@@ -1710,13 +1836,7 @@ const QuotationDetails = () => {
         <div className="qd-head__text">
           <div className="qd-head__line">
             <h1 className="qd-head__title">Quotation Details</h1>
-            <span
-              className={`eq-pill ${
-                quotation?.status === "send" ? "is-quoted" : "is-open"
-              }`}
-            >
-              {quotation?.status === "send" ? "Confirmed" : "Pending"}
-            </span>
+            <span className={`eq-pill ${stage.pill}`}>{stage.label}</span>
           </div>
           <p className="qd-head__meta">
             {quotation?.quoteId ? `#${quotation.quoteId}` : "Quotation"}
@@ -1728,12 +1848,16 @@ const QuotationDetails = () => {
         </div>
 
         <div className="qd-head__actions">
-          <Button className="eq-primary" onClick={handleUpdateQuotation}>
+          {/* Wrapped so the click event is not passed on as an argument. */}
+          <BusyButton
+            className="eq-primary"
+            onClick={() => handleUpdateQuotation()}
+          >
             <FaEdit /> Update Quotation
-          </Button>
-          <Button className="eq-ghost" onClick={handleDownloadPDFClick}>
+          </BusyButton>
+          <BusyButton className="eq-ghost" onClick={handleDownloadPDFClick}>
             <FaFilePdf /> Download as PDF
-          </Button>
+          </BusyButton>
         </div>
       </div>
 
@@ -1767,13 +1891,24 @@ const QuotationDetails = () => {
           <Card.Body>
             <ol className="qd-steps">
               {(() => {
-                const sent = quotation?.status === "send";
-                const ordered = Boolean(quotation?.orderId || quotation?.orderGenerated);
+                /* An order that was called off leaves the quote saying
+                   "send", so neither step is reached once it is. */
+                const cancelled = stage.label === "Cancelled";
+                const sent = !cancelled && quotation?.status === "send";
+                const ordered = !cancelled && Boolean(orderState);
                 const steps = [
                   { key: "quote", label: "Quotation", icon: FaFileInvoiceDollar, done: true },
                   { key: "sent", label: "Confirmed", icon: FaCheck, done: sent },
                   { key: "order", label: "Order Generated", icon: FaShoppingBag, done: ordered },
-                  { key: "done", label: "Completed", icon: FaFlagCheckered, done: ordered && sent },
+                  /* Completed means the job ran, not that an order exists;
+                     the records only ever say Confirm or cancelled today, so
+                     this stays unticked until one of these appears. */
+                  {
+                    key: "done",
+                    label: "Completed",
+                    icon: FaFlagCheckered,
+                    done: ["completed", "returned", "delivered"].includes(orderState),
+                  },
                 ];
                 // The furthest reached step is the one shown as current.
                 let current = 0;
@@ -1865,14 +2000,12 @@ const QuotationDetails = () => {
                 <td>{quotation.inchargePhone || ""}</td>
                 <td><span className="qd-k"><FaBookmark /> Status</span></td>
                 <td>
+                  {/* The stage, not the record's own word: "send" means
+                      little to a reader and says nothing about an order
+                      that was called off. */}
                   {quotation.status ? (
-                    <span
-                      className={`badge ${quotation.status === "cancelled"
-                        ? "bg-danger"
-                        : "bg-secondary"
-                        }`}
-                    >
-                      {quotation.status}
+                    <span className={`eq-pill ${stage.pill}`}>
+                      {stage.label}
                     </span>
                   ) : (
                     ""
@@ -2177,7 +2310,26 @@ const QuotationDetails = () => {
                       {days}
                     </td>
                     <td style={{ padding: "12px", verticalAlign: "middle" }}>
-                      ₹{price}
+                      {editIdx === idx ? (
+                        <input
+                          type="number"
+                          min={0}
+                          value={editPrice}
+                          onChange={(e) => {
+                            const val = e.target.value;
+                            setEditPrice(val === "" ? "" : Math.max(0, Number(val)));
+                          }}
+                          style={{
+                            width: 90,
+                            padding: "2px 6px",
+                            fontSize: 13,
+                          }}
+                          disabled={loading}
+                          title="Only this quotation changes; the product keeps its own price"
+                        />
+                      ) : (
+                        <>₹{price}</>
+                      )}
                     </td>
                     <td style={{ padding: "12px", verticalAlign: "middle" }}>
                       ₹{item.amount * days}
@@ -2188,7 +2340,7 @@ const QuotationDetails = () => {
                     <td style={{ padding: "12px", verticalAlign: "middle" }}>
                       {editIdx === idx ? (
                         // <>
-                        //   <Button
+                        //   <BusyButton
                         //     variant="success"
                         //     size="sm"
                         //     style={{ padding: "2px 6px", marginRight: 4 }}
@@ -2198,7 +2350,7 @@ const QuotationDetails = () => {
                         //     }
                         //   >
                         //     <FaCheck />
-                        //   </Button>
+                        //   </BusyButton>
                         //   <Button
                         //     variant="secondary"
                         //     size="sm"
@@ -2248,7 +2400,7 @@ const QuotationDetails = () => {
                           >
                             <FaEdit />
                           </Button>
-                          <Button
+                          <BusyButton
                             variant="link"
                             size="sm"
                             style={{ color: "#d00", padding: 0, marginLeft: 8 }}
@@ -2258,7 +2410,7 @@ const QuotationDetails = () => {
                             }
                           >
                             <FaTrashAlt />
-                          </Button>
+                          </BusyButton>
                         </>
                       )}
                     </td>
@@ -2653,7 +2805,7 @@ const QuotationDetails = () => {
         style={{ border: "none" }}
       >
         <Card.Body className="p-4 d-flex justify-content-between align-items-center flex-wrap gap-3">
-          <Button
+          <BusyButton
             variant="primary"
             style={{
               background: "linear-gradient(45deg, #2980b9, #3498db)",
@@ -2670,7 +2822,7 @@ const QuotationDetails = () => {
             onClick={handleGenerateOrder}
           >
             Generate Order
-          </Button>
+          </BusyButton>
 
           <Button
             variant="info"
@@ -2691,7 +2843,7 @@ const QuotationDetails = () => {
             Add Product
           </Button>
 
-          <Button
+          <BusyButton
             variant="danger"
             style={{
               background: "linear-gradient(45deg, #c0392b, #e74c3c)",
@@ -2707,7 +2859,7 @@ const QuotationDetails = () => {
             onClick={handleCancelQuotation}
           >
             Cancel Quotation
-          </Button>
+          </BusyButton>
         </Card.Body>
       </Card>
 
@@ -2856,7 +3008,7 @@ const QuotationDetails = () => {
           </Form>
         </Modal.Body>
         <Modal.Footer style={{ borderTop: "none", padding: "0 20px 20px" }}>
-          <Button
+          <BusyButton
             style={{
               background: "linear-gradient(45deg, #27ae60, #2ecc71)",
               border: "none",
@@ -2874,8 +3026,8 @@ const QuotationDetails = () => {
             disabled={paymentLoading}
           >
             Add
-          </Button>
-          <Button
+          </BusyButton>
+          <BusyButton
             style={{
               background: "linear-gradient(45deg, #2980b9, #3498db)",
               border: "none",
@@ -2891,7 +3043,7 @@ const QuotationDetails = () => {
             disabled={paymentLoading}
           >
             Skip
-          </Button>
+          </BusyButton>
           <Button
             style={{
               background: "linear-gradient(45deg,rgb(185, 41, 72), #3498db)",
@@ -3050,7 +3202,7 @@ const QuotationDetails = () => {
           >
             Cancel
           </Button>
-          <Button
+          <BusyButton
             variant="primary"
             size="sm"
             disabled={addLoading || !addRowsReady}
@@ -3061,22 +3213,25 @@ const QuotationDetails = () => {
               : addRows.length > 1
                 ? `Add ${addRows.length} products`
                 : "Add"}
-          </Button>
+          </BusyButton>
         </Modal.Footer>
       </Modal>
             <Card className="shadow-sm mb-4" style={{ borderRadius: 14 }}>
         <Card.Body>
           <div className="d-flex justify-content-between align-items-center mb-2">
-            <h6 style={{ fontWeight: 700, marginBottom: 0 }}>Inventory</h6>
+            <div className="d-flex align-items-center" style={{ gap: 10 }}>
+              <FaBoxOpen />
+              <h5 style={{ margin: 0, fontWeight: 800 }}>Inventory</h5>
+            </div>
 
-            <Button
+            <BusyButton
               size="sm"
-              style={{ backgroundColor: "#BD5525", border: "none" }}
+              variant="outline-secondary"
               onClick={() => fetchInventoryFromQuoteData(quotation)}
               disabled={inventoryLoading}
             >
-              {inventoryLoading ? "Fetching..." : "Refresh"}
-            </Button>
+              {inventoryLoading ? "Refreshing..." : "Refresh"}
+            </BusyButton>
           </div>
 
           {inventoryError ? (
@@ -3089,50 +3244,78 @@ const QuotationDetails = () => {
             <Table bordered hover responsive size="sm" style={{ background: "#fff", fontSize: 13 }}>
               <thead className="table-light">
                 <tr>
-                  <th>Product Name</th>
-                  <th style={{ width: 200 }}>Product Icon</th>
-                  <th>Available Stock</th>
-                  <th>Under Quotations</th>
+                  <th style={{ width: 70 }}>#</th>
+                  <th>Product</th>
+                  <th style={{ width: 90 }}>Icon</th>
+                  <th style={{ width: 160 }}>Available Stock</th>
+                  <th style={{ width: 160 }}>Under Quotations</th>
                 </tr>
               </thead>
 
               <tbody>
                 {inventoryLoading ? (
                   <tr>
-                    <td colSpan={4} className="text-center">
+                    <td colSpan={5} className="text-center">
                       <Spinner animation="border" size="sm" />
                     </td>
                   </tr>
                 ) : inventoryRows.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="text-center text-muted">
+                    <td colSpan={5} className="text-center text-muted">
                       No inventory found.
                     </td>
                   </tr>
                 ) : (
-                  inventoryRows.map((item) => {
+                  inventoryRows.map((item, idx) => {
                     const prod = allProducts.find((p) => String(p._id) === String(item.productId));
                     const icon = prod?.ProductIcon;
 
                     return (
                       <tr key={item.productId}>
-                        <td>{item.productName}</td>
+                        <td>{idx + 1}</td>
+                        <td style={{ fontWeight: 600 }}>{item.productName}</td>
                         <td>
                           {icon ? (
                             <img
                               src={`${icon}`}
                               alt={item.productName}
-                              style={{ width: 90, height: 70, objectFit: "contain" }}
+                              style={{
+                                width: 44,
+                                height: 44,
+                                borderRadius: 10,
+                                objectFit: "cover",
+                                border: "1px solid #eee",
+                                background: "#fafafa",
+                              }}
+                              onError={(e) => {
+                                e.currentTarget.style.display = "none";
+                              }}
                             />
                           ) : (
-                            <span className="text-muted">—</span>
+                            <div
+                              style={{
+                                width: 44,
+                                height: 44,
+                                borderRadius: 10,
+                                background: "#f1f3f5",
+                                border: "1px solid #eee",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                fontWeight: 800,
+                                color: "#666",
+                              }}
+                              title="No Icon"
+                            >
+                              {String(item.productName || "P").slice(0, 1).toUpperCase()}
+                            </div>
                           )}
                         </td>
-                        <td style={{ fontWeight: 700 }}>{item.availableStock}</td>
+                        <td>{item.availableStock}</td>
                         <td
                           style={
                             item.availableStock < item.pendingQuotationQty
-                              ? { color: "red", fontWeight: 700 }
+                              ? { color: "#D97706", fontWeight: 700 }
                               : {}
                           }
                         >

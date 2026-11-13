@@ -9,6 +9,7 @@ import * as XLSX from 'xlsx'; // ✅ Excel export library
 
 const ProductReports = () => {
   const [fromDate, setFromDate] = useState(null);
+import BusyButton from "../../components/BusyButton";
   const [toDate, setToDate] = useState(null);
   const [reportData, setReportData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -127,7 +128,7 @@ const ProductReports = () => {
               />
             </Col>
             <Col md={4}>
-              <Button
+              <BusyButton
                 variant="primary"
                 className="w-100"
                 onClick={fetchReport}
@@ -140,7 +141,7 @@ const ProductReports = () => {
                 }}
               >
                 {loading ? <Spinner animation="border" size="sm" /> : 'Generate Report'}
-              </Button>
+              </BusyButton>
             </Col>
           </Row>
 

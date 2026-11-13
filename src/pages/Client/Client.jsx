@@ -35,6 +35,7 @@ import {
   executivesOf,
 } from "./clientFields";
 import { ApiURL } from "../../api";
+import BusyButton from "../../components/BusyButton";
 
 /**
  * Client directory.
@@ -883,9 +884,10 @@ const Client = () => {
                 >
                   Cancel
                 </Button>
-                <Button className="eq-primary" type="submit" disabled={saving}>
+                <BusyButton
+              busy={saving} className="eq-primary" type="submit" disabled={saving}>
                   {saving ? "Updating..." : "Update Client"}
-                </Button>
+                </BusyButton>
               </Modal.Footer>
             </Form>
           )}

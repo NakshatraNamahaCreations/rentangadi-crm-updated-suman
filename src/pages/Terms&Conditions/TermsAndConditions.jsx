@@ -308,6 +308,7 @@ import Pagination from "../../components/Pagination";
 import axios from "axios";
 import { ApiURL } from "../../api";
 import { toast } from "react-hot-toast";
+import BusyButton from "../../components/BusyButton";
 
 const itemsPerPage = 5;
 
@@ -526,13 +527,13 @@ const TermsAndConditions = () => {
             + Add Terms and Conditions
           </Button>
           {selectedRows.length > 0 && (
-            <Button
+            <BusyButton
               variant="outline-danger"
               onClick={handleDeleteSelected}
               style={{ fontSize: "12px", padding: "6px 12px" }}
             >
               Delete {selectedRows.length} Selected
-            </Button>
+            </BusyButton>
           )}
         </div>
       </div>
@@ -595,14 +596,14 @@ const TermsAndConditions = () => {
                       {term.description}
                     </td>
                     <td>
-                      <Button
+                      <BusyButton
                         variant="outline-danger"
                         size="sm"
                         className="me-2"
                         onClick={() => handleDeleteTerm(globalIndex)}
                       >
                         <FaTrashAlt style={{ width: "12px", height: "12px" }} />
-                      </Button>
+                      </BusyButton>
                       <Button
                         variant="outline-success"
                         size="sm"
@@ -678,13 +679,13 @@ const TermsAndConditions = () => {
           </Form>
         </Modal.Body>
         <Modal.Footer>
-          <Button
+          <BusyButton
             variant="dark"
             onClick={handleAddTerm}
             style={{ fontSize: "12px" }}
           >
             {isEditing ? "Update" : "Add"}
-          </Button>
+          </BusyButton>
           <Button
             variant="outline-secondary"
             onClick={() => setShowModal(false)}

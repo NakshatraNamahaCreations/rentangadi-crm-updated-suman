@@ -5,6 +5,7 @@ import axios from "axios";
 import { useParams, useLocation } from "react-router-dom";
 import { ApiURL, ImageApiURL } from "../../api";
 import html2pdf from "html2pdf.js";
+import BusyButton from "../../components/BusyButton";
 
 // Function to parse date from DD-MM-YYYY format
 const parseDate = (str) => {
@@ -145,13 +146,13 @@ const Invoice = () => {
   return (
     <div className="invoice-scroll">
     <Container ref={invoiceRef} className="p-4 border invoice-sheet" style={{ fontSize: "12px" }}>
-      <Button
+      <BusyButton
         onClick={handleDownloadPDF}
         variant="success"
         className="my-3 d-flex ms-auto" // ms-auto will push the button to the right
       >
         Download Invoice
-      </Button>
+      </BusyButton>
 
       <Row className="mb-4">
         <Col md={3}>

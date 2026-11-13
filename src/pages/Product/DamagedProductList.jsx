@@ -28,6 +28,7 @@ import Select from "react-select";
 // ✅ NEW: Excel export
 import * as XLSX from "xlsx";
 import { saveAs } from "file-saver";
+import BusyButton from "../../components/BusyButton";
 
 
 const DamagedProductList = () => {
@@ -700,13 +701,13 @@ const DamagedProductList = () => {
             Close
           </Button>
 
-          <Button
+          <BusyButton
             className="eq-primary"
             onClick={handleAddDamaged}
             disabled={!selectedAddProduct || saving}
           >
             {saving ? "Saving..." : "Save"}
-          </Button>
+          </BusyButton>
         </Modal.Footer>
       </Modal>
 
@@ -789,9 +790,9 @@ const DamagedProductList = () => {
           <Button variant="secondary" onClick={closeReturn} disabled={returning}>
             Cancel
           </Button>
-          <Button className="eq-primary" onClick={handleReturn} disabled={returning}>
+          <BusyButton className="eq-primary" onClick={handleReturn} disabled={returning}>
             {returning ? "Saving..." : "Return to stock"}
-          </Button>
+          </BusyButton>
         </Modal.Footer>
       </Modal>
     </Container>

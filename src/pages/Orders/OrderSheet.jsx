@@ -8,6 +8,7 @@ import { parseDate } from "../../utils/parseDates";
 import { safeImageToBase64 } from "../../utils/createPdf";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
+import BusyButton from "../../components/BusyButton";
 
 const BRAND = [189, 85, 37]; // #BD5525
 
@@ -367,13 +368,13 @@ const OrderSheet = () => {
 
   return (
     <div className="container my-5">
-      <Button
+      <BusyButton
         onClick={handleDownloadPDF}
         variant="success"
         className="my-1 d-flex ms-auto"
       >
         Download Order Sheet
-      </Button>
+      </BusyButton>
 
       <div
         className="invoice-sheet"

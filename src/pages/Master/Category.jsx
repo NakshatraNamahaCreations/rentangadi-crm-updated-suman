@@ -12,6 +12,7 @@ import { toast } from "react-hot-toast";
 import { ApiURL, ImageApiURL } from "../../api.js";
 import Pagination from "../../components/Pagination";
 import MasterThumb from "./MasterThumb";
+import BusyButton from "../../components/BusyButton";
 
 /**
  * Product categories.
@@ -229,13 +230,13 @@ const Category = () => {
 
           <div className="eq-filters__end">
             {selectedRows.length > 0 ? (
-              <Button
+              <BusyButton
                 variant="outline-danger"
                 className="eq-ghost"
                 onClick={handleDeleteSelected}
               >
                 <FaTrashAlt /> Delete {selectedRows.length}
-              </Button>
+              </BusyButton>
             ) : null}
             <Button className="eq-primary" onClick={openAddModal}>
               <FaPlus /> Add Category
@@ -409,13 +410,13 @@ const Category = () => {
           >
             Cancel
           </Button>
-          <Button
+          <BusyButton
             className="eq-primary"
             onClick={handleAddOrEditCategory}
             disabled={saving}
           >
             {saving ? "Saving..." : isEditing ? "Update" : "Add"}
-          </Button>
+          </BusyButton>
         </Modal.Footer>
       </Modal>
     </>

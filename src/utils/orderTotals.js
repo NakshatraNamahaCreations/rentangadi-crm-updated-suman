@@ -72,6 +72,23 @@ export const buildOrderItems = (order) => {
 };
 
 /**
+ * What one quotation line charges per unit.
+ *
+ * A quotation records the price it agreed, which can differ from the
+ * product's current list price - that is the whole point of editing a price
+ * on a quotation. The detail endpoint substitutes the catalogue's price
+ * into the response, so the line's own total, which is price x quantity, is
+ * the honest source; the price field is the fallback for a line that never
+ * stored a total.
+ */
+export const quoteLinePrice = (p) => {
+  const qty = safeNum(p?.quantity ?? p?.qty);
+  const total = safeNum(p?.total);
+  if (qty > 0 && total > 0) return total / qty;
+  return safeNum(p?.price);
+};
+
+/**
  * The priced lines of a quotation, taken from its first slot.
  *
  * Two things differ from an order. The products sit under `Products`, and
@@ -86,7 +103,7 @@ export const buildQuoteItems = (quote) => {
   return products.map((p) => {
     /* Both keys occur; where both are present they always agree. */
     const qty = safeNum(p?.quantity ?? p?.qty);
-    const unitPrice = safeNum(p?.price);
+    const unitPrice = quoteLinePrice(p);
     const days = calcDays(
       p?.productQuoteDate || slot?.quoteDate || quote?.quoteDate,
       p?.productEndDate || slot?.endDate || quote?.endDate

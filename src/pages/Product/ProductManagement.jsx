@@ -28,6 +28,7 @@ import {
   inr,
   distinctValues,
 } from "./productFields";
+import BusyButton from "../../components/BusyButton";
 
 const ProductManagement = () => {
   const [allProducts, setAllProducts] = useState([]);
@@ -334,13 +335,13 @@ const ProductManagement = () => {
 
           <div className="eq-filters__end">
             {selectedRows.length > 0 ? (
-              <Button
+              <BusyButton
                 variant="outline-danger"
                 className="eq-ghost"
                 onClick={handleDeleteSelected}
               >
                 <FaTrashAlt /> Delete {selectedRows.length}
-              </Button>
+              </BusyButton>
             ) : null}
             <Button className="eq-ghost" onClick={handleExport}>
               <FaFileExport /> Export

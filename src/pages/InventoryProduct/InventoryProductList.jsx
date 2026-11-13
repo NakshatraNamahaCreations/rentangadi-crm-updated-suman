@@ -21,6 +21,7 @@ import Pagination from "../../components/Pagination";
 import PendingQuotationsModal from "../../components/PendingQuotationsModal";
 import { ApiURL } from "../../api";
 import "react-datepicker/dist/react-datepicker.css";
+import BusyButton from "../../components/BusyButton";
 
 /**
  * Inventory availability for a date range.
@@ -394,7 +395,7 @@ const InventoryProduct = () => {
             </Form.Group>
 
             <div className="inv-field inv-field--action">
-              <Button
+              <BusyButton
                 className="eq-primary"
                 onClick={handleFetchInventory}
                 disabled={loading}
@@ -408,7 +409,7 @@ const InventoryProduct = () => {
                     <FaSearch /> Fetch Inventory
                   </>
                 )}
-              </Button>
+              </BusyButton>
             </div>
           </div>
         </Card.Body>

@@ -4383,8 +4383,8 @@ a {
 /* A cancelled quote or order is finished business, not a warning, so it reads
    muted rather than red - red is kept for stock that is over-committed. */
 .eq-pill.is-cancelled {
-  background: #F3F4F6;
-  color: #6B7280;
+  background: #FEF2F3;
+  color: #DC3545;
   text-decoration: line-through;
 }
 
@@ -5300,7 +5300,17 @@ a {
 }
 
 .qc-legend i.is-cancelled {
-  background: #9CA3AF;
+  background: #DC3545;
+}
+
+/* A calendar that counts four states needs two more dots: the blue of a
+   quotation that has gone out, and the green of a confirmed job. */
+.qc-legend i.is-quoted {
+  background: #1D4ED8;
+}
+
+.qc-legend i.is-confirmed {
+  background: #16A34A;
 }
 
 /* ---- Month grid ---- */
@@ -5422,6 +5432,18 @@ a {
   text-align: center;
   font-size: 0.875rem;
   color: var(--db-muted, #64748B);
+}
+
+/* Standalone, where a whole page is waiting rather than one card's grid. */
+.qc-loading--page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 320px;
+  border: 1px solid var(--db-line, #E8EDF4);
+  border-radius: 14px;
+  background: #fff;
 }
 
 /* ---- Right rail ---- */
@@ -9619,13 +9641,15 @@ a.rp-inv__row:hover .rp-inv__go {
    has to read as a figure first and a control second, so it keeps the table's
    numeric weight and only picks up the accent and an underline.
 --------------------------------------------------------------------------- */
+/* Held within what is on the shelf: nothing is wrong, so it reads as
+   ordinary figures. Only the underline says it can be opened. */
 .uq-link {
   border: 0;
   background: none;
   padding: 0;
   font: inherit;
   font-weight: 700;
-  color: var(--route-accent, var(--rt-brand));
+  color: var(--db-ink, #0F172A);
   text-decoration: underline;
   text-underline-offset: 3px;
   text-decoration-thickness: 1px;
@@ -9637,10 +9661,10 @@ a.rp-inv__row:hover .rp-inv__go {
   text-decoration-thickness: 2px;
 }
 
-/* Held more than is available: the table already flags this in red, and the
-   control must not override it. */
+/* Held more than is on the shelf - 51 against 50 - which is the one case
+   worth a colour. The cell carries the same one. */
 .uq-link.is-over {
-  color: #dc3545;
+  color: #D97706;
 }
 
 /* Nothing to open, so it stays plain text. */
@@ -10280,9 +10304,19 @@ tr:hover > .qd-handle-cell .qd-handle {
   color: #B45309;
 }
 
+.qc-cell .qc-cell__badge.is-quoted {
+  background: #EFF6FF;
+  color: #1D4ED8;
+}
+
+.qc-cell .qc-cell__badge.is-confirmed {
+  background: #ECFDF3;
+  color: #16A34A;
+}
+
 .qc-cell .qc-cell__badge.is-cancelled {
-  background: #F3F4F6;
-  color: #6B7280;
+  background: #FEF2F3;
+  color: #DC3545;
 }
 
 /* A phone cell has room for a number per state and nothing else. */
@@ -10315,8 +10349,8 @@ tr:hover > .qd-handle-cell .qd-handle {
 }
 
 .qc-cell__dot.is-cancelled {
-  background: #F3F4F6;
-  color: #6B7280;
+  background: #FEF2F3;
+  color: #DC3545;
 }
 
 /* Three stacked lines need a little more height than a single total did. */
@@ -10351,17 +10385,9 @@ tr:hover > .qd-handle-cell .qd-handle {
   text-overflow: ellipsis;
 }
 
-/* Below this the word would be clipped mid-way, which reads worse than the
-   count and its colour alone; the full wording stays in the cell's title. */
-@media (max-width: 1365.98px) {
-  .qc-cell__label {
-    display: none;
-  }
-}
-
 /* The badge's own background already says which state it is, so inside a day
    cell the dot is redundant - and dropping it buys the ~9px the wording needs
-   to fit a 84px cell at 1280, which is the width this panel is used at. */
+   to fit a 84px cell at 1280. */
 .qc-cell .qc-cell__badge i {
   display: none;
 }
@@ -10372,17 +10398,51 @@ tr:hover > .qd-handle-cell .qd-handle {
   font-size: 0.5938rem;
 }
 
-/* With the dot gone the wording fits from here up; below it the count and its
-   colour carry the cell on their own, and the title still spells it out. */
-@media (min-width: 1200px) {
-  .qc-cell__label {
-    display: inline;
+/* The word stays on at every width this grid is used at: a day reading "12"
+   on its own does not say what the 12 are. */
+.qc-cell__label {
+  display: inline;
+}
+
+/* Narrower than this the two will not sit side by side, so the word drops to
+   its own line under the count instead of being clipped mid-way. The cell
+   grows for the second line; the grid row follows it. */
+@media (max-width: 1365.98px) {
+  .qc-cell .qc-cell__badge {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0;
+    line-height: 1.25;
+    font-size: 0.5625rem;
+  }
+
+  .qc-cell {
+    min-height: 104px;
   }
 }
 
+/* Narrower still - a 65px cell - and only a smaller word fits the line. The
+   count keeps its size; the full wording is in the cell's title and in the
+   day's panel either way. */
 @media (max-width: 1199.98px) {
-  .qc-cell__label {
-    display: none;
+  .qc-cell .qc-cell__badge {
+    padding: 2px 3px;
+    font-size: 0.5rem;
+  }
+
+  .qc-cell__count {
+    font-size: 0.625rem;
+  }
+}
+
+/* Smaller again where the cell drops under about 60px. Below that the word
+   is ellipsised rather than dropped: the badge's colour and the letters that
+   do fit still say which state it is, and the cell's title spells it out. */
+@media (max-width: 1149.98px) {
+  .qc-cell .qc-cell__badge {
+    padding: 2px;
+    font-size: 0.4688rem;
+    letter-spacing: -0.02em;
   }
 }
 
@@ -10412,9 +10472,19 @@ tr:hover > .qd-handle-cell .qd-handle {
   color: #B45309;
 }
 
+.qc-state.is-quoted {
+  background: #EFF6FF;
+  color: #1D4ED8;
+}
+
+.qc-state.is-confirmed {
+  background: #ECFDF3;
+  color: #16A34A;
+}
+
 .qc-state.is-cancelled {
-  background: #F3F4F6;
-  color: #6B7280;
+  background: #FEF2F3;
+  color: #DC3545;
 }
 
 /* A lone tile should keep a card's width rather than stretch the whole row. */
@@ -10510,9 +10580,55 @@ button.qc-day__date.is-clickable:focus-visible {
 }
 
 /* uq-stats is a three-column grid where it is used with three figures.
-   Only the count is left on this one, so the row sizes to it. */
+   This one carries the day's count and what it came to, so it fits as many
+   as the modal is wide and wraps the rest. */
 .dom-stats {
-  grid-template-columns: minmax(0, max-content);
+  grid-template-columns: repeat(auto-fit, minmax(98px, 1fr));
+  gap: 7px;
+}
+
+.dom-stats .uq-stat {
+  padding: 9px 10px;
+}
+
+/* A day's total runs to eight characters, which the larger size would
+   break onto two lines in a box this narrow. */
+.dom-stats .uq-stat__value {
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+
+.dom-stats .uq-stat__label {
+  font-size: 0.625rem;
+  letter-spacing: 0.03em;
+}
+
+/* Names the tax inside Total, so the figure is never read as pre-GST. */
+.dom-stat__hint {
+  display: block;
+  margin-top: 3px;
+  font-size: 0.5938rem;
+  color: #94A3B8;
+  white-space: nowrap;
+}
+
+/* Said plainly when part of the day could not be read, so the total below
+   is never taken for the whole of it. */
+.dom-note {
+  margin-bottom: 14px;
+  padding: 9px 12px;
+  border-radius: 9px;
+  background: #FFFBEB;
+  color: #B45309;
+  font-size: 0.8125rem;
+}
+
+.dom-note.is-quiet {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #F7F9FC;
+  color: var(--db-muted, #64748B);
 }
 
 /* ---- Back to the day's list ---- */
@@ -10972,6 +11088,46 @@ button.qc-day__date.is-clickable:focus-visible {
 }
 
 .enq-chip.is-cancelled {
-  background: #E5E7EB;
-  color: #374151;
+  background: #FEF2F3;
+  color: #DC3545;
+}
+
+/* ---------------------------------------------------------------------------
+   Status, still being worked out
+   Where an enquiry stands is two further lists away, so the rows arrive first
+   and this sits in the Status column until the answer does. It is deliberately
+   quiet and the same size as a real pill, so nothing shifts when it is
+   replaced - and it never names a stage, because any name would be a guess.
+   --------------------------------------------------------------------------- */
+
+.eq-pill.is-waiting {
+  background: #F3F4F6;
+  color: #9CA3AF;
+  letter-spacing: 0.08em;
+  animation: eqPillWaiting 1.2s ease-in-out infinite;
+}
+
+@keyframes eqPillWaiting {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .eq-pill.is-waiting {
+    animation: none;
+  }
+}
+
+/* A day whose records are counted but not yet placed. Same shape and size as
+   a real tally, so the cell does not jump when the stage arrives. */
+
+.qc-cell .qc-cell__badge.is-waiting,
+.qc-cell__dot.is-waiting {
+  background: #F3F4F6;
+  color: #9CA3AF;
 }
