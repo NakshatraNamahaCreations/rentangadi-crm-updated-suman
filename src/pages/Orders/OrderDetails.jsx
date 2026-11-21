@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   Card,
   Table,
@@ -44,6 +44,39 @@ import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 import BusyButton from "../../components/BusyButton";
 
+/**
+ * Availability for a set of products over a date range.
+ *
+ * Two things on this page want the same answer at the same moment: the table
+ * of stock, and the per-product availability merged into the rows. They asked
+ * separately, with the same three values in a different order, so every order
+ * opened made the identical query twice - half a second to a second each.
+ *
+ * Calls in flight are shared rather than cached, so a second asker gets the
+ * first one's answer, but a call made after a product is added or removed
+ * still goes to the server and sees the new figures.
+ */
+const inFlightInventory = new Map();
+
+const readInventory = (startDate, endDate, products) => {
+  const ids = products.map(String);
+  /* Sorted, so the same set asked for in a different order is one question. */
+  const key = `${startDate}|${endDate}|${[...ids].sort().join(",")}`;
+
+  const already = inFlightInventory.get(key);
+  if (already) return already;
+
+  const work = axios
+    .get(`${ApiURL}/inventory/filter`, {
+      params: { startDate, endDate, products: ids.join(",") },
+    })
+    .then((res) => res?.data?.stock || [])
+    .finally(() => inFlightInventory.delete(key));
+
+  inFlightInventory.set(key, work);
+  return work;
+};
+
 const labelStyle = {
   color: "#64748B",
   fontWeight: 600,
@@ -77,7 +110,6 @@ const formatDateToDDMMYYYY = (date) => {
   return `${day}-${month}-${year}`; // Return in dd-mm-yyyy format
 };
 
-const token = sessionStorage.getItem("token") || ""
 const OrderDetails = () => {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -104,6 +136,9 @@ const OrderDetails = () => {
   // Add Product Modal states
   const [showAdd, setShowAdd] = useState(false);
   const [allProducts, setAllProducts] = useState([]);
+  /* Whether allProducts now holds the whole catalogue rather than just this
+     order's products, so the narrow fetch never shrinks it back. */
+  const [catalogueLoaded, setCatalogueLoaded] = useState(false);
   /* One entry per product picked in the Add Product dialog. Several can be
      added at once, and each carries its own availability and quantity:
      { productId, product, availableStock, qty, loading } */
@@ -124,7 +159,6 @@ const OrderDetails = () => {
   const [addedRefProducts, setAddedRefProducts] = useState([]);
   const [shippingAddress, setShippingAddress] = useState("");
   const [floorManager, setFloorManager] = useState("");
-  const [refurbishmentdata, setRefurbishmentdata] = useState({});
   const [productDates, setProductDates] = useState({});
   const pdfRef = useRef();
   const [pdfMode, setPdfMode] = useState(false);
@@ -256,9 +290,15 @@ const OrderDetails = () => {
   useEffect(() => {
     const fetchCurrentUser = async () => {
       try {
+        /* Read the token here rather than once at module scope. This file is
+           imported eagerly by App.jsx, so the module is evaluated while the
+           login screen is up - before a token exists. A const captured then
+           stays the empty string for the whole session, this effect returns
+           on the guard below, currentUser never fills, and the Client PDF
+           button never renders for anyone. */
+        const token = sessionStorage.getItem("token") || "";
         if (!token) {
           setCurrentUser("");
-
           return;
         }
 
@@ -293,7 +333,7 @@ const OrderDetails = () => {
     };
 
     fetchCurrentUser();
-  }, [token]);
+  }, []);
 
   useEffect(() => {
     if (order) setRemarks(order?.remarks || "");
@@ -466,15 +506,13 @@ const OrderDetails = () => {
         return;
       }
 
-      const res = await axios.get(`${ApiURL}/inventory/filter`, {
-        params: {
-          startDate: slot0.quoteDate,
-          endDate: slot0.endDate,
-          products: productIds.join(","),
-        },
-      });
+      const stock = await readInventory(
+        slot0.quoteDate,
+        slot0.endDate,
+        productIds
+      );
 
-      setInventoryRows(res?.data?.stock || []);
+      setInventoryRows(stock);
       setInventoryRange({ startDate: slot0.quoteDate, endDate: slot0.endDate });
     } catch (err) {
       console.error("fetchFilteredInventoryForOrder error:", err);
@@ -500,11 +538,36 @@ const OrderDetails = () => {
     }
   };
 
+  /**
+   * The product master, as much of it as this screen needs.
+   *
+   * The whole catalogue is 267 products, 318KB and three and a half seconds,
+   * and this page used to fetch all of it on every load to put names and
+   * pictures against the handful of products on one order. Now it asks for
+   * those few - 7KB, 150ms - and fetches the rest only when the "add product"
+   * picker opens, which is the one place that genuinely needs to list
+   * everything.
+   */
+  const fetchProductsByIds = async (ids) => {
+    if (!ids.length) return;
+    try {
+      const res = await axios.get(`${ApiURL}/product/quoteproducts`, {
+        params: { ids: ids.join(",") },
+      });
+      if (res.status === 200) setAllProducts(res.data.QuoteProduct || []);
+    } catch (error) {
+      console.error("Error fetching this order's products:", error);
+    }
+  };
+
   const fetchAllProducts = async () => {
+    /* Once, however many times the picker is opened. */
+    if (catalogueLoaded) return;
     try {
       const res = await axios.get(`${ApiURL}/product/quoteproducts`);
       if (res.status === 200) {
         setAllProducts(res.data.QuoteProduct || []);
+        setCatalogueLoaded(true);
       }
     } catch (error) {
       console.error("Error fetching all products:", error);
@@ -687,8 +750,12 @@ const OrderDetails = () => {
   };
 
   const handleShowAdd = () => {
+    /* The picker is the one place that needs the whole catalogue. Opened
+       first so it is on screen while the list arrives, rather than making the
+       button sit dead for a second. */
     setShowAdd(true);
     setAddRows([]);
+    fetchAllProducts();
   };
 
   const handleCloseAdd = () => {
@@ -819,6 +886,10 @@ const OrderDetails = () => {
 
     const failed = [];
     let added = 0;
+    /* Where the line reached besides the order. 114 of the orders came from
+       a quotation that is no longer there, so this cannot be assumed. */
+    let reachedQuotation = 0;
+    let reachedEnquiry = 0;
 
     for (const row of addRows) {
       try {
@@ -837,8 +908,12 @@ const OrderDetails = () => {
             productSlot: "Slot 1: 7:00 AM to 11:00 PM",
           }
         );
-        if (response.status === 200) added += 1;
-        else failed.push(row.product?.ProductName || "a product");
+        if (response.status === 200) {
+          added += 1;
+          const where = response.data?.propagated;
+          if (where?.quotation === "added") reachedQuotation += 1;
+          if (where?.enquiry === "added") reachedEnquiry += 1;
+        } else failed.push(row.product?.ProductName || "a product");
       } catch (error) {
         console.error("Error adding product:", error?.message);
         failed.push(row.product?.ProductName || "a product");
@@ -852,11 +927,25 @@ const OrderDetails = () => {
     }
 
     if (added) {
-      toast.success(
-        added === 1
-          ? "Product added successfully"
-          : `${added} products added successfully`
-      );
+      const what = added === 1 ? "Product added" : `${added} products added`;
+
+      /* Named rather than implied: the line going onto the quotation and the
+         enquiry too is the point of the change, and when it cannot - the
+         quotation was deleted, or there was never an enquiry - saying so
+         beats letting the other screens look out of date for no reason. */
+      const also = [];
+      if (reachedQuotation === added) also.push("quotation");
+      if (reachedEnquiry === added) also.push("enquiry");
+
+      if (also.length === 2) {
+        toast.success(`${what} to the order, quotation and enquiry`);
+      } else if (also.length === 1) {
+        toast.success(`${what} to the order and ${also[0]}`);
+      } else {
+        toast.success(
+          `${what} to this order only - no quotation or enquiry is linked to it`
+        );
+      }
     }
     if (failed.length) {
       toast.error(`Could not add: ${failed.join(", ")}`);
@@ -1020,7 +1109,21 @@ const OrderDetails = () => {
         // Successfully deleted, fetch the updated order details from the backend
         fetchOrderDetails();
 
-        toast.success("Product deleted successfully!");
+        /* Where it was actually removed from. Said out loud for the same
+           reason adding does: an order whose quotation is gone cannot have
+           the line taken off one, and the toast should not pretend it did. */
+        const where = response.data?.propagated;
+        const also = [];
+        if (where?.quotation === "removed") also.push("quotation");
+        if (where?.enquiry === "removed") also.push("enquiry");
+
+        toast.success(
+          also.length === 2
+            ? "Product removed from the order, quotation and enquiry"
+            : also.length === 1
+              ? `Product removed from the order and ${also[0]}`
+              : "Product removed from this order only"
+        );
       } else {
         // If the response is not successful, show an error
         toast.error("Failed to delete product. Please try again.");
@@ -1069,24 +1172,17 @@ const OrderDetails = () => {
     );
     if (productIds.length === 0) return {};
 
-    // console.log("order.slots.products: ", order.slots[0].products);
-    // console.log("startDate: ", order?.slots[0].quoteDate);
-    // console.log("endDate: ", order?.slots[0].endDate);
-
     try {
-      const response = await axios.get(`${ApiURL}/inventory/filter`, {
-        params: {
-          products: productIds.join(","),
-          startDate: order?.slots[0].quoteDate,
-          endDate: order?.slots[0].endDate,
-        },
-      });
-      // Assume response.data.stock is [{ productId, availableStock }]
+      const stock = await readInventory(
+        order?.slots?.[0]?.quoteDate,
+        order?.slots?.[0]?.endDate,
+        productIds
+      );
+      // stock is [{ productId, availableStock }]
       const stockMap = {};
-      (response.data.stock || []).forEach((item) => {
+      stock.forEach((item) => {
         stockMap[item.productId] = item.availableStock;
       });
-      console.log("stockmap: ", stockMap);
       return stockMap;
     } catch (error) {
       console.error("Error fetching available stock for all products:", error);
@@ -1094,16 +1190,13 @@ const OrderDetails = () => {
     }
   };
 
-  const getRefurbishmentByOrderId = async () => {
-    try {
-      const response = await fetch(`${ApiURL}/refurbishment/${id}`);
-      // console.log(response, "response");
-      const data = await response.json();
-      setRefurbishmentdata(data);
-    } catch (error) {
-      console.error("Error fetching refurbishment:", error);
-    }
-  };
+  /* getRefurbishmentByOrderId used to live here. It fetched this order's
+     refurbishment on every load, put it in state - and nothing ever read that
+     state, so the request bought nothing and, for the great majority of
+     orders that have never been refurbished, logged a 404 while doing it.
+     The endpoint itself now answers an empty record instead of a 404; if this
+     page should actually show refurbishment, that is a new feature rather
+     than a call to restore. */
 
   useEffect(() => {
     if (order?.slots) {
@@ -1220,10 +1313,25 @@ const OrderDetails = () => {
   }, [order, grandTotal])
 
   useEffect(() => {
-    console.log("useeffect");
     fetchOrderDetails();
-    fetchAllProducts();
   }, []);
+
+  /* The ids as one string, so the effect below re-runs when the order's
+     products actually change rather than on every new order object. */
+  const orderProductIds = useMemo(() => {
+    const ids = new Set();
+    (order?.slots || []).forEach((slot) =>
+      (slot?.products || []).forEach((p) => {
+        if (p?.productId) ids.add(String(p.productId));
+      })
+    );
+    return [...ids].sort().join(",");
+  }, [order]);
+
+  useEffect(() => {
+    if (!orderProductIds || catalogueLoaded) return;
+    fetchProductsByIds(orderProductIds.split(","));
+  }, [orderProductIds, catalogueLoaded]);
 
   useEffect(() => {
     fetchAvailableStockForAllProducts();
@@ -1234,10 +1342,6 @@ const OrderDetails = () => {
       fetchFilteredInventoryForOrder();
     }
   }, [order]);
-
-  useEffect(() => {
-    getRefurbishmentByOrderId();
-  }, [id]);
 
   useEffect(() => {
     if (order) {

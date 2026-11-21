@@ -505,6 +505,7 @@ const ProductManagement = () => {
               itemsPerPage={itemsPerPage}
               currentPage={currentPage}
               onPageChange={setCurrentPage}
+              loading={loading}
             />
           </div>
         </Card>

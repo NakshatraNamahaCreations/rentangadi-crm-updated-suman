@@ -1,5 +1,5 @@
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Select from "react-select";
 import {
   Card,
@@ -29,8 +29,6 @@ import {
   FaArrowLeft,
   FaMapMarkerAlt,
   FaCubes,
-  FaShoppingCart,
-  FaRupeeSign,
   FaWarehouse,
   FaFileInvoiceDollar,
   FaCalculator,
@@ -81,6 +79,9 @@ const EnquiryDetails = () => {
   const [inventoryLoading, setInventoryLoading] = useState(false);
   /* The stock row whose quotation breakdown is open, or null. */
   const [underQuotationsRow, setUnderQuotationsRow] = useState(null);
+  /* The inventory card is further down the same page now, so "Check
+     inventory" scrolls to it instead of switching to a tab. */
+  const inventoryRef = useRef(null);
   const [inventoryError, setInventoryError] = useState("");
 
   const gstOptions = [
@@ -251,18 +252,15 @@ const EnquiryDetails = () => {
     return 1;
   })();
 
-  /* Figures for the summary tiles. Stock reuses the same lookup the products
-     table uses, so the tile and the row can never disagree. */
-  const stockFor = (prod) =>
-    Number(
-      allProducts.find((ap) => String(ap._id) === String(prod.productId))
-        ?.ProductStock ?? prod.stock ?? 0
-    ) || 0;
-
+  /* Figures for the summary panel further down. The strip of tiles that used
+     to sit under the header is gone, and with it the total-stock figure -
+     adding every product's warehouse stock together was a number with no
+     meaning: three sofas and three hundred chairs make "338 units in stock",
+     which says nothing about whether this enquiry can be filled. The per-row
+     stock in the products table is the figure that answers that. */
   const lineItems = enquiry?.products || [];
   const totalProducts = lineItems.length;
   const totalQty = lineItems.reduce((sum, pr) => sum + (Number(pr.qty) || 0), 0);
-  const totalStock = lineItems.reduce((sum, pr) => sum + stockFor(pr), 0);
   const subTotal = lineItems.reduce(
     (sum, pr) => sum + (Number(pr.qty) || 0) * (Number(pr.price) || 0),
     0
@@ -337,7 +335,19 @@ const EnquiryDetails = () => {
   };
 
   // Delete handler (local UI only - as your current code)
-  const handleDelete = (productId) => {
+  /**
+   * Removes a product from the enquiry.
+   *
+   * This only ever changed local state - the row disappeared and was back on
+   * the next load, because nothing was saved. The endpoint to do it has been
+   * there all along, so the row is taken off the screen and written through
+   * in the same breath, and put back if the server refuses.
+   */
+  const handleDelete = async (productId) => {
+    if (!window.confirm("Delete this product?")) return;
+
+    const before = enquiry;
+
     setEnquiry((prev) => ({
       ...prev,
       products: prev.products.filter((p) => p.productId !== productId),
@@ -347,6 +357,19 @@ const EnquiryDetails = () => {
       delete copy[productId];
       return copy;
     });
+
+    try {
+      await axios.delete(
+        `${ApiURL}/Enquiry/delete-product-data/${enquiry?.enquiryId}`,
+        { data: { productId } }
+      );
+      toast.success("Product removed");
+    } catch (error) {
+      setEnquiry(before);
+      toast.error(
+        error?.response?.data?.error || "Could not remove the product"
+      );
+    }
   };
 
   /**
@@ -630,7 +653,8 @@ const EnquiryDetails = () => {
   return (
     <Container
       fluid
-      className="py-4"
+      /* enq-detail scopes the tightened spacing in theme.css to this page. */
+      className="py-3 enq-detail"
       style={{ background: "#f6f8fa", minHeight: "100vh" }}
     >
       {/* ---- Record header ---- */}
@@ -664,7 +688,22 @@ const EnquiryDetails = () => {
               </Dropdown.Item>
             ) : null}
             <Dropdown.Divider />
-            <Dropdown.Item onClick={() => setTab("inventory")}>
+            {/* The inventory card is on the page now, so this scrolls to it.
+                The products view has to be the one showing first - the other
+                panels are display:none, and an element inside one has no
+                position to scroll to - and the scroll waits a frame for that
+                switch to land. */}
+            <Dropdown.Item
+              onClick={() => {
+                setTab("products");
+                requestAnimationFrame(() =>
+                  inventoryRef.current?.scrollIntoView({
+                    behavior: "smooth",
+                    block: "center",
+                  })
+                );
+              }}
+            >
               <FaWarehouse className="me-2" /> Check inventory
             </Dropdown.Item>
             {enquiry?.status === "sent" ? (
@@ -674,44 +713,6 @@ const EnquiryDetails = () => {
             ) : null}
           </Dropdown.Menu>
         </Dropdown>
-      </div>
-
-      {/* ---- Stat tiles ---- */}
-      <div className="enq-stats">
-        <div className="enq-stat" style={{ "--stat": "#6D4FC4" }}>
-          <span className="enq-stat__icon"><FaBoxOpen /></span>
-          <span className="enq-stat__body">
-            <span className="enq-stat__label">Total Products</span>
-            <span className="enq-stat__value">{totalProducts}</span>
-            <span className="enq-stat__hint">In this enquiry</span>
-          </span>
-        </div>
-        <div className="enq-stat" style={{ "--stat": "#17864F" }}>
-          <span className="enq-stat__icon"><FaWarehouse /></span>
-          <span className="enq-stat__body">
-            <span className="enq-stat__label">Total Stock</span>
-            <span className="enq-stat__value">{totalStock}</span>
-            <span className="enq-stat__hint">Units in stock</span>
-          </span>
-        </div>
-        <div className="enq-stat" style={{ "--stat": "#2563C9" }}>
-          <span className="enq-stat__icon"><FaShoppingCart /></span>
-          <span className="enq-stat__body">
-            <span className="enq-stat__label">Total Qty</span>
-            <span className="enq-stat__value">{totalQty}</span>
-            <span className="enq-stat__hint">Units requested</span>
-          </span>
-        </div>
-        <div className="enq-stat" style={{ "--stat": "#7C3AED" }}>
-          <span className="enq-stat__icon"><FaRupeeSign /></span>
-          <span className="enq-stat__body">
-            <span className="enq-stat__label">Sub Total</span>
-            <span className="enq-stat__value">
-              &#8377;{subTotal.toLocaleString("en-IN")}
-            </span>
-            <span className="enq-stat__hint">Qty &times; price</span>
-          </span>
-        </div>
       </div>
 
       <Row>
@@ -802,15 +803,6 @@ const EnquiryDetails = () => {
               onClick={() => setTab("products")}
             >
               <FaBoxOpen /> Products ({totalProducts})
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={tab === "inventory"}
-              className={`enq-tab${tab === "inventory" ? " is-active" : ""}`}
-              onClick={() => setTab("inventory")}
-            >
-              <FaWarehouse /> Inventory
             </button>
             <button
               type="button"
@@ -1060,10 +1052,17 @@ const EnquiryDetails = () => {
             </Card.Body>
           </Card>
 
-          </div>
-
-          <div style={{ display: tab === "inventory" ? "block" : "none" }}>
-          {/* ✅ Inventory Table (Under Quotation) */}
+          {/**
+           * Inventory, on the page rather than behind a tab.
+           *
+           * It was a third tab, which meant the stock position of the very
+           * products listed above it was one click away and easy to miss.
+           * Nothing extra is fetched to show it here: /inventory/filter is
+           * called once when the enquiry loads and already fills both this
+           * table and the confirm table above, so this is the same data that
+           * was already in the page, now visible without hunting for it.
+           */}
+          <div ref={inventoryRef}>
           <Card className="shadow-sm mb-4" style={{ borderRadius: 14 }}>
             <Card.Body>
               <div className="d-flex align-items-center justify-content-between mb-2">
@@ -1205,6 +1204,7 @@ const EnquiryDetails = () => {
             </Card.Body>
           </Card>
           </div>
+          </div>
 
           <div style={{ display: tab === "quotation" ? "block" : "none" }}>
             <Card className="shadow-sm mb-4" style={{ borderRadius: 14 }}>
@@ -1266,6 +1266,17 @@ const EnquiryDetails = () => {
               <FaCalculator />
               <h5>Summary</h5>
             </div>
+            {/**
+             * The summary shows its working.
+             *
+             * Sub Total is one day of hire - quantity times price, nothing
+             * else - while the figure underneath comes from the quotation,
+             * which charges per day and adds GST. On a long booking the two
+             * are far apart and nothing on screen said why: a 32 day hire
+             * read as "Sub Total 7,000" directly above "264,320", which
+             * looks like a broken number rather than 7,000 x 32 x 1.18.
+             * So the days and the multiplication are spelled out.
+             */}
             <ul className="enq-summary__list">
               <li>
                 <span>Total Products</span>
@@ -1275,18 +1286,44 @@ const EnquiryDetails = () => {
                 <span>Total Quantity</span>
                 <b>{totalQty}</b>
               </li>
+              {daysDiff > 1 ? (
+                <li>
+                  <span>Rental Days</span>
+                  <b>{daysDiff}</b>
+                </li>
+              ) : null}
               <li>
-                <span>Sub Total</span>
+                <span>{daysDiff > 1 ? "Sub Total (per day)" : "Sub Total"}</span>
                 <b>&#8377;{subTotal.toLocaleString("en-IN")}</b>
               </li>
+              {daysDiff > 1 ? (
+                <li>
+                  <span>
+                    Sub Total &times; {daysDiff} days
+                  </span>
+                  <b>
+                    &#8377;{(subTotal * daysDiff).toLocaleString("en-IN")}
+                  </b>
+                </li>
+              ) : null}
             </ul>
             <div className="enq-summary__total">
-              <span>Total Confirmed Amount</span>
+              {/* Named for what it is. Once a quotation exists this row is
+                  that quotation's total, not an amount anyone confirmed -
+                  calling it "Confirmed" while the order is still pending is
+                  what made the figure look wrong as well as unexplained. */}
+              <span>
+                {enquiry?.status === "sent"
+                  ? "Quotation Total (incl. GST)"
+                  : "Total Confirmed Amount"}
+              </span>
               <b>
                 &#8377;{" "}
-                {enquiry?.status === "sent"
-                  ? enquiry?.quotationData?.GrandTotal
-                  : grandTotal}
+                {Number(
+                  enquiry?.status === "sent"
+                    ? enquiry?.quotationData?.GrandTotal
+                    : grandTotal
+                ).toLocaleString("en-IN", { maximumFractionDigits: 2 })}
               </b>
             </div>
           </Card.Body>
@@ -1600,12 +1637,16 @@ const EnquiryDetails = () => {
       <div className="enq-quotebar">
         <div className="enq-quotebar__inner">
           <span className="enq-quotebar__total">
-            Total Confirmed Amount:{" "}
+            {enquiry?.status === "sent"
+              ? "Quotation Total:"
+              : "Total Confirmed Amount:"}{" "}
             <b>
               &#8377;{" "}
-              {enquiry?.status === "sent"
-                ? enquiry?.quotationData?.GrandTotal
-                : grandTotal}
+              {Number(
+                enquiry?.status === "sent"
+                  ? enquiry?.quotationData?.GrandTotal
+                  : grandTotal
+              ).toLocaleString("en-IN", { maximumFractionDigits: 2 })}
             </b>
           </span>
 

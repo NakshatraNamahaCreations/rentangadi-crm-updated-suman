@@ -18,13 +18,33 @@ export const fmtMoney = (n) =>
     maximumFractionDigits: 0,
   }).format(safeNum(n));
 
-const parseDDMMYYYY = (str) => {
+/**
+ * A stored date, in either shape the records use.
+ *
+ * Most rows write DD-MM-YYYY and a handful write YYYY-MM-DD. Splitting on
+ * the dash and assuming day-first turned "2026-04-08" into day 2026 of
+ * month 04, which is not a date - so those rows got a nonsense day count
+ * and, through calcDays below, a nonsense total. QT1839 came out at 256,060
+ * against a stored 4,130 for a single 3,500 line.
+ */
+const parseStoredDate = (str) => {
   try {
     if (!str) return null;
-    const [dd, mm, yyyy] = String(str).split("-");
-    if (!dd || !mm || !yyyy) return null;
-    const d = new Date(`${yyyy}-${mm}-${dd}`);
-    return isNaN(d.getTime()) ? null : d;
+    const s = String(str).trim();
+
+    const ymd = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (ymd) {
+      const d = new Date(`${ymd[1]}-${ymd[2]}-${ymd[3]}`);
+      return isNaN(d.getTime()) ? null : d;
+    }
+
+    const dmy = s.match(/^(\d{2})-(\d{2})-(\d{4})$/);
+    if (dmy) {
+      const d = new Date(`${dmy[3]}-${dmy[2]}-${dmy[1]}`);
+      return isNaN(d.getTime()) ? null : d;
+    }
+
+    return null;
   } catch (e) {
     return null;
   }
@@ -33,8 +53,8 @@ const parseDDMMYYYY = (str) => {
 /** Both ends count, so a one-day hire is one day and not zero. */
 export const calcDays = (startStr, endStr) => {
   try {
-    const start = parseDDMMYYYY(startStr);
-    const end = parseDDMMYYYY(endStr);
+    const start = parseStoredDate(startStr);
+    const end = parseStoredDate(endStr);
     if (!start || !end) return 1;
     const diff = Math.floor((end - start) / (1000 * 60 * 60 * 24)) + 1;
     return !Number.isFinite(diff) || diff < 1 ? 1 : diff;

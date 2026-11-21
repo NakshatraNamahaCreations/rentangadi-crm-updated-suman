@@ -10,6 +10,7 @@ import {
   FaFileExport,
   FaRegCalendarAlt,
   FaListUl,
+  FaTrashAlt,
 } from "react-icons/fa";
 import * as XLSX from "xlsx";
 import { toast } from "react-hot-toast";
@@ -18,6 +19,7 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import Pagination from "../../components/Pagination";
 import axios from "axios";
 import { ApiURL } from "../../api";
+import ConfirmPasswordModal from "../../components/ConfirmPasswordModal";
 import DatePicker from "react-datepicker";
 import RecordCalendar from "../../components/RecordCalendar";
 import DayRecordsModal from "../../components/DayRecordsModal";
@@ -83,6 +85,58 @@ const Orders = () => {
   const [dayBreakdown, setDayBreakdown] = useState(null);
 
   const [orders, setOrders] = useState([]);
+
+  /**
+   * Deleting an order asks for the admin password, the same gate the enquiry
+   * and quotation lists use. There was no way to delete an order at all
+   * before this - only to cancel one, which leaves it in the list.
+   *
+   * The stock the order was holding is released by the server; the
+   * quotation and enquiry behind it are left alone, because an order is one
+   * outcome of an enquiry and not the record of it.
+   */
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+
+  const askToDelete = (ids) => {
+    setDeleteError("");
+    setPendingDelete(ids.filter(Boolean));
+  };
+
+  const runDelete = async (password) => {
+    const ids = pendingDelete || [];
+    setDeleting(true);
+    setDeleteError("");
+
+    try {
+      for (const id of ids) {
+        await axios.delete(`${ApiURL}/order/deleteOrder/${id}`, {
+          data: { password },
+        });
+      }
+
+      setOrders((prev) =>
+        prev.filter((o) => !ids.includes(o.id) && !ids.includes(o._id))
+      );
+      setPendingDelete(null);
+      toast.success(
+        ids.length === 1 ? "Order deleted" : `${ids.length} orders deleted`
+      );
+    } catch (error) {
+      const status = error?.response?.status;
+      const message = error?.response?.data?.error;
+
+      if (status === 400 || status === 401 || status === 403) {
+        setDeleteError(message || "Password is not correct");
+      } else {
+        setPendingDelete(null);
+        toast.error(message || "Failed to delete the order");
+      }
+    } finally {
+      setDeleting(false);
+    }
+  };
   const [searchQuery, setSearchQuery] = useState(qParam);
   /* "all" | "confirmed" | "cancelled". Nearly a hundred orders are already
      cancelled, and until now there was no way to separate them out. */
@@ -490,6 +544,8 @@ const Orders = () => {
             unitOne="order"
             doneLabel="Confirmed"
             pendingLabel="Unconfirmed"
+            /* No "Upcoming" panel, same as the quotation calendar. */
+            showUpcoming={false}
             getStatusLabel={(o) => {
               // The record stores "Confirm"/"cancelled"; anything else is
               // shown exactly as it came back.
@@ -559,6 +615,17 @@ const Orders = () => {
                         >
                           <MdVisibility />
                         </Button>
+                        {/* Deleting asks for the admin password; the server
+                            is what enforces it. */}
+                        <Button
+                          variant="outline-danger"
+                          size="sm"
+                          className="ms-2"
+                          onClick={() => askToDelete([order.id || order._id])}
+                          title="Delete order"
+                        >
+                          <FaTrashAlt />
+                        </Button>
                       </td>
                     </tr>
                   );
@@ -593,6 +660,17 @@ const Orders = () => {
         dateLabel={dayBreakdown?.dateLabel}
         records={dayBreakdown?.orders || []}
         variant="order"
+      />
+
+      <ConfirmPasswordModal
+        show={Boolean(pendingDelete)}
+        onHide={() => setPendingDelete(null)}
+        onConfirm={runDelete}
+        busy={deleting}
+        error={deleteError}
+        title="Delete this order?"
+        message="The order will be removed and the stock it was holding released. The quotation and enquiry behind it are kept."
+        confirmLabel="Delete order"
       />
     </Container>
   );

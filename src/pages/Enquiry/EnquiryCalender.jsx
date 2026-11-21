@@ -22,6 +22,7 @@ import {
   STAGE_LABEL,
   buildStageMap,
   stageFromMap,
+  rowsCarryStage,
   loadStageSources,
 } from "../../utils/enquiryStage";
 
@@ -62,7 +63,11 @@ const EnquiryCalender = () => {
 
   const [enquiries, setEnquiries] = useState([]);
   const [visible, setVisible] = useState([]);
-  const [loading, setLoading] = useState(false);
+  /* True from the start: the month is fetched on mount, and starting at
+     false left one render in which the page looked loaded with no rows -
+     long enough for the stage effect below to decide the rows carry no
+     stage and start reading two whole lists it did not need. */
+  const [loading, setLoading] = useState(true);
   const [cursor, setCursor] = useState(() => moment().startOf("month"));
   const [quotations, setQuotations] = useState([]);
   const [orders, setOrders] = useState([]);
@@ -90,25 +95,47 @@ const EnquiryCalender = () => {
     fetchEnquiry();
   }, [cursor]);
 
-  /* How far each enquiry got lives in its quotation and in the order raised
-     from that quotation, so both lists are read once - they do not change
-     with the month on screen. A list that fails costs the stage column and
-     nothing else; the calendar still draws. */
+  /* The rows carry their own stage when the API is new enough to send it. */
+  const carriesStage = useMemo(() => rowsCarryStage(enquiries), [enquiries]);
+
+  /**
+   * How far each enquiry got.
+   *
+   * The API sends this with the row now, so the usual path is to notice that
+   * and do nothing: no second and third list, no join in the browser, and no
+   * window where the status filters read zero because only one of three
+   * downloads had finished.
+   *
+   * The join is kept for a backend that does not send it - the same build of
+   * this panel is pointed at more than one - and reports in as its lists
+   * improve. A list that fails costs the stage and nothing else.
+   */
   useEffect(() => {
+    /* Nothing to decide until the enquiries are in: with no rows yet, "do
+       they carry a stage?" is always no, and the join would start before the
+       answer could be known - which is how both lists were still being
+       downloaded after this was supposed to have made them unnecessary. */
+    if (loading) return undefined;
+
+    if (carriesStage || !enquiries.length) {
+      setStagesReady(true);
+      return undefined;
+    }
+
     let alive = true;
     loadStageSources((quotes, orders, settled) => {
       if (!alive) return;
       setQuotations(quotes);
       setOrders(orders);
       /* Settled even when a list failed: the stage then falls back to
-         Pending, which is the honest answer when there is nothing to
-         read, and the page must not wait for ever. */
+         Pending, which is the honest answer when there is nothing left to
+         read, and the screen must not wait for ever. */
       if (settled) setStagesReady(true);
     });
     return () => {
       alive = false;
     };
-  }, []);
+  }, [loading, carriesStage, enquiries.length]);
 
   const stageMap = useMemo(
     () => buildStageMap(quotations, orders),

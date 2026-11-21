@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   FaTimes,
   FaPhoneAlt,
@@ -48,6 +48,18 @@ const Cell = ({ icon, label, value, href }) =>
 
 const ClientPeek = ({ client, onClose, onEdit }) => {
   const [tab, setTab] = useState("overview");
+
+  /* On a narrow screen this is a drawer over the list rather than a rail
+     beside it, so there has to be a way out that is not hunting for the
+     close button. Harmless at any width. */
+  useEffect(() => {
+    if (!client) return undefined;
+    const onKey = (e) => {
+      if (e.key === "Escape") onClose && onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [client, onClose]);
 
   if (!client) {
     return (

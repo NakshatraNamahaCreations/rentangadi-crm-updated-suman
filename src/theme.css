@@ -4328,6 +4328,21 @@ a {
   color: #94A3B8;
 }
 
+/* The three date columns on the enquiry list: enquiry date, delivery,
+   dismantle. Tabular figures so the three read as a column of dates rather
+   than three ragged strings, and no wrapping - DD-MM-YYYY broken across two
+   lines is unreadable. */
+.eq-date-col {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8125rem;
+  color: #475569;
+}
+
+th.eq-date-col {
+  color: inherit;
+}
+
 .eq-amount {
   font-weight: 700;
   color: var(--db-ink, #0F172A) !important;
@@ -6037,9 +6052,11 @@ a {
 }
 
 /* ---- Client + stage ---- */
+/* One card wide now that the stage strip is gone. The two-column grid it
+   used to be left the client card at 44% with the rest of the row empty. */
 .qd-top {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   margin-bottom: 16px;
 }
@@ -8271,8 +8288,12 @@ a.rp-inv__row:hover .rp-inv__go {
   }
 }
 
-/* Below the tablet breakpoint the rail stacks under the list, which is
-   where the sidebar also goes off-canvas. */
+/* Below the tablet breakpoint there is no room for a rail beside the list,
+   so the preview becomes a drawer over it.
+
+   It used to stack underneath instead, which at this width put it about a
+   thousand pixels below the fold with nothing scrolling to it - so clicking
+   "View" changed nothing anyone could see and read as a broken button. */
 @media (max-width: 991.98px) {
   .eq-split,
   .qc-split {
@@ -8280,8 +8301,24 @@ a.rp-inv__row:hover .rp-inv__go {
   }
 
   .eqp {
-    position: static;
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: auto;
+    width: min(420px, 100%);
     max-height: none;
+    border: 0;
+    border-left: 1px solid var(--db-line, #E8EDF4);
+    border-radius: 0;
+    box-shadow: -10px 0 30px rgba(16, 24, 40, 0.18);
+    z-index: 1045;
+  }
+
+  /* With nothing selected there is nothing to cover the list with. Above
+     this width the empty rail is hidden too, for the same reason. */
+  .eqp--empty {
+    display: none;
   }
 
   .qc-side {
@@ -9829,6 +9866,26 @@ a.rp-inv__row:hover .rp-inv__go {
   margin-top: 2px;
 }
 
+/* Same shape as the warning above, but this one explains a figure rather
+   than flagging a problem, so it is not red. */
+.uq-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin-bottom: 14px;
+  padding: 10px 13px;
+  border: 1px solid #dbe4f0;
+  border-radius: 11px;
+  font-size: 0.8125rem;
+  color: #3c5272;
+  background: #f3f7fc;
+}
+
+.uq-note svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
 /* --- one card per quotation slot --- */
 .uq-list {
   display: flex;
@@ -10723,6 +10780,34 @@ button.qc-day__date.is-clickable:focus-visible {
   white-space: nowrap;
 }
 
+/* What a record is made of, on the row itself. Wraps rather than being cut
+   off: on a narrow screen the parts matter more than keeping to one line,
+   and a truncated "Transport ₹4..." is worse than a second row. */
+.dom-row__parts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  margin-top: 5px;
+}
+
+.dom-row__part {
+  font-size: 0.72rem;
+  color: var(--db-ink, #0F172A);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* The label sits quietly in front of its figure. */
+.dom-row__part em {
+  font-style: normal;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  font-size: 0.625rem;
+  color: #94A3B8;
+  margin-right: 4px;
+}
+
 .dom-row__amt {
   flex: 0 0 auto;
   font-size: 0.875rem;
@@ -11130,4 +11215,276 @@ button.qc-day__date.is-clickable:focus-visible {
 .qc-cell__dot.is-waiting {
   background: #F3F4F6;
   color: #9CA3AF;
+}
+
+/* The entry count while the rows are still on their way. It used to read
+   "Showing 1 to 0 of 0 entries", which is what an empty table says - so a
+   list that was merely slow looked like a list with nothing in it. */
+.pagination-info__loading {
+  color: #94A3B8;
+  font-style: italic;
+}
+
+/* The subcategory column on the inventory availability table. Quieter than
+   the product name beside it: it groups the row, it is not the row. */
+.inv-subcat {
+  font-size: 0.8125rem;
+  color: #475569;
+  white-space: nowrap;
+}
+
+/* ===================================================================
+   Enquiry detail - tightened spacing
+
+   The page ran to 1,574px against a 1,000px viewport, so the summary and
+   the status timeline were always below the fold and the top half was
+   mostly air. Nothing is removed here and no type gets smaller; only the
+   gaps between things close up.
+
+   All of it is scoped to .enq-detail. The same classes are used by other
+   screens, and a card that is comfortable on a list is not necessarily
+   crowded here.
+   =================================================================== */
+
+/* The header band: it is a title, not a feature. */
+.enq-detail .enq-hero {
+  padding: 8px 18px 9px;
+  margin-bottom: 12px;
+  gap: 12px;
+}
+
+/* Client block at the top of the left card. */
+.enq-detail .enq-client {
+  gap: 11px;
+  margin-bottom: 9px;
+}
+
+.enq-detail .enq-client__avatar {
+  width: 42px;
+  height: 42px;
+}
+
+.enq-detail .enq-rule {
+  margin-bottom: 9px;
+}
+
+/* The seven meta rows - executive, contact, the three dates, slot,
+   address. Eight pixels between each adds up to more than a row's worth
+   of empty space on its own. */
+.enq-detail .card-body > .mb-2 {
+  margin-bottom: 3px !important;
+}
+
+.enq-detail .enq-actions {
+  margin-top: 11px;
+  padding-top: 10px;
+}
+
+.enq-detail .enq-tabs {
+  margin-bottom: 10px;
+}
+
+/* Cards sit closer together. */
+.enq-detail .card.mb-4 {
+  margin-bottom: 14px !important;
+}
+
+/* Product rows: the image is 38px, so 13px of padding above and below it
+   made a 67px row to show one line of text.
+
+   Written against the same selector shape the base rule uses -
+   `.app-page .table > tbody > tr > td` - because a shorter one loses to it
+   and the padding silently stays as it was. */
+.app-page .enq-detail .table > tbody > tr > td,
+.app-page .enq-detail .table.eq-table > tbody > tr > td,
+.app-page .enq-detail .table > thead > tr > th,
+.app-page .enq-detail .table.eq-table > thead > tr > th {
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+
+.enq-detail .enq-summary__list li {
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
+/* On a short screen the saving matters more than the breathing room. */
+@media (max-height: 820px) {
+  .enq-detail .enq-hero {
+    padding: 6px 16px 7px;
+    margin-bottom: 9px;
+  }
+
+  .enq-detail .card.mb-4 {
+    margin-bottom: 10px !important;
+  }
+
+  .app-page .enq-detail .table > tbody > tr > td,
+  .app-page .enq-detail .table.eq-table > tbody > tr > td {
+    padding-top: 5px;
+    padding-bottom: 5px;
+  }
+}
+
+/* ===================================================================
+   Quotation detail - tightened spacing
+
+   1,964px against a 1,000px viewport: the cost summary sat at 993 and the
+   inventory at 1,667, so almost everything that matters was a scroll away
+   while the top of the page was mostly padding.
+
+   Same approach as the enquiry detail above - nothing removed, no smaller
+   type, only the gaps. Scoped to .qd, which is this page's own root class,
+   so the shared card and table rules are untouched elsewhere.
+   =================================================================== */
+
+.qd .qd-crumbs {
+  margin-bottom: 8px;
+}
+
+.qd .qd-head {
+  margin-bottom: 12px;
+}
+
+/* Every card on the page sits closer to the next. */
+.qd .card {
+  margin-bottom: 12px !important;
+}
+
+/* Card bodies carry 24px of padding from Bootstrap's p-4, which is a lot
+   around a two-column list of names and dates.
+
+   !important because Bootstrap's spacing utilities are themselves
+   !important - without it p-4 keeps winning and the padding never moves. */
+.qd .card > .card-body,
+.qd .card .card-body {
+  padding: 14px 16px !important;
+}
+
+/* The details grid: eight short values should not need a 43px row each. */
+.app-page .qd .table > tbody > tr > td,
+.app-page .qd .table.table-sm > tbody > tr > td {
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
+/* The stage strip - quotation, confirmed, order generated, completed. */
+.qd .qd-stage {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.qd .qd-client__meta {
+  margin-top: 2px;
+}
+
+@media (max-height: 820px) {
+  .qd .card {
+    margin-bottom: 9px !important;
+  }
+
+  .qd .card > .card-body,
+  .qd .card .card-body {
+    padding: 11px 14px !important;
+  }
+
+  .app-page .qd .table > tbody > tr > td,
+  .app-page .qd .table.table-sm > tbody > tr > td {
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+}
+
+/* -------------------------------------------------------------------
+   Quotation detail - second pass
+
+   Measured block by block, the page was 1,686px and three things held
+   most of it:
+
+     Cost Summary   518px   eight rows, several inflated to 54px by an
+                            inline edit button at full Bootstrap size
+     Products table 195px   76px a row, because the slot dropdown under
+                            each date is a full-height form control
+     Details grid   235px
+
+   So those are what this trims. The figures and the controls all stay;
+   they just stop being spaced for a form.
+   ------------------------------------------------------------------- */
+
+/* Cost summary rows. Bootstrap's mb-2 is !important, so this has to be. */
+.qd .card-body > .d-flex.mb-2 {
+  margin-bottom: 1px !important;
+  min-height: 0;
+}
+
+/* The pencil that edits a charge sits inside those rows at full button
+   height, which is what made them 54px instead of 37px. */
+.qd .card-body > .d-flex .btn {
+  padding: 0 6px;
+  line-height: 1.35;
+  min-height: 0;
+}
+
+/* "Add discount" is a link, and does not need a button's padding. */
+.qd .card-body > .btn-link {
+  padding: 1px 0 3px;
+  min-height: 0;
+}
+
+.qd .qd-grand {
+  margin-top: 4px;
+}
+
+.qd .card-body > hr {
+  margin: 5px 0;
+}
+
+/* The slot dropdown under each product's dates. A full-height select for
+   one short line is what makes a 76px row. */
+.qd .table .form-select,
+.qd .table .form-control {
+  padding-top: 2px;
+  padding-bottom: 2px;
+  min-height: 0;
+  height: auto;
+  font-size: 0.78rem;
+  background-position: right 0.5rem center;
+}
+
+.qd .table .form-select.mt-1 {
+  margin-top: 2px !important;
+}
+
+/* The drag hint above the products table. */
+.qd .qd-reorder-hint {
+  margin-bottom: 4px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+@media (max-height: 900px) {
+  .qd .card-body > .d-flex.mb-2 {
+    margin-bottom: 0 !important;
+  }
+
+  .qd .card {
+    margin-bottom: 8px !important;
+  }
+}
+
+/* The dates cell on the products table.
+
+   The two dates sit in a flex row with a <br> between them, left over from
+   when they stacked. As a flex item that <br> is an empty box that still
+   claims a line, which is most of why the row was 75px for two short dates
+   and a dropdown. */
+.qd .table .d-flex > br {
+  display: none;
+}
+
+/* Some cells in this table carry an inline padding of 12px, and an inline
+   style beats a stylesheet unless the stylesheet says !important. */
+.app-page .qd .table > tbody > tr > td {
+  padding-top: 5px !important;
+  padding-bottom: 5px !important;
 }

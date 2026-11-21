@@ -26,9 +26,12 @@ import QuotePeek from "./QuotePeek";
 import {
   buildOrderStateByQuote,
   loadOrderSources,
+  orderStateFromRows,
+  rowsCarryOrderState,
 } from "../../utils/enquiryStage";
 import { toast } from "react-hot-toast";
 import BusyButton from "../../components/BusyButton";
+import ConfirmPasswordModal from "../../components/ConfirmPasswordModal";
 
 /* The record's own word for itself. It is not the whole story: an order
    raised from a quote can be called off afterwards, and the quote then
@@ -83,68 +86,75 @@ const Quotation = () => {
   const [itemsPerPage, setItemsPerPage] = useState(10);
   const navigate = useNavigate();
 
-  /* Two reads of the same list, started together.
-
-     The shared copy the server keeps answers in about a second and carries
-     every field this table shows - the two differ by one key the table
-     never reads - so the rows are drawn from it. But it is only rebuilt
-     every couple of minutes, and a quote raised or confirmed since then
-     would read as it was. Asking for a page skips that copy and costs
-     seven seconds against the hosted backend, so it is not waited on: it
-     lands a few seconds later and quietly takes over. The table is right
-     within a second and right to the moment soon after. */
+  /**
+   * One read of the list.
+   *
+   * This used to read it twice at once: the copy the server keeps, which
+   * drew the table in about a second, and a paginated read that skipped that
+   * copy, cost up to seven seconds and quietly replaced it - because the
+   * cached copy could be two minutes behind and a quote raised since would
+   * read as it was.
+   *
+   * The cache is now dropped whenever a quotation or an order is written, so
+   * the copy it serves is current and the second read bought nothing but the
+   * seven seconds.
+   */
   useEffect(() => {
     let alive = true;
+    setLoading(true);
     const rowsOf = (d) =>
       Array.isArray(d) ? d : d?.quoteData || d?.data || [];
 
-    const held = axios
+    axios
       .get(`${ApiURL}/quotations/getallquotations`)
-      .then((res) => {
-        if (!alive || res.status !== 200) return;
-        /* Only if the fresher read has not already answered. */
-        setQuotations((have) => (have.length ? have : rowsOf(res.data)));
-        setLoading(false);
-      })
-      .catch((error) => console.error("Error fetching quotations:", error));
-
-    const fresh = axios
-      .get(`${ApiURL}/quotations/getallquotations?limit=100000&page=1`)
       .then((res) => {
         if (!alive || res.status !== 200) return;
         setQuotations(rowsOf(res.data));
       })
-      .catch((error) =>
-        console.error("Error refreshing quotations:", error)
-      );
-
-    /* Even if both failed, the page must stop saying it is loading. */
-    Promise.allSettled([held, fresh]).then(() => {
-      if (alive) setLoading(false);
-    });
+      .catch((error) => console.error("Error fetching quotations:", error))
+      .finally(() => {
+        /* Even on failure the page must stop saying it is loading. */
+        if (alive) setLoading(false);
+      });
 
     return () => {
       alive = false;
     };
   }, []);
 
-  /* An order called off leaves its quotation saying "send", so the orders
-     are read once and the two are put together here. A failure costs only
-     the cancelled wording; the list still shows. */
+  /* Whether the rows already say what became of their order. */
+  const carriesOrderState = useMemo(
+    () => rowsCarryOrderState(quotations),
+    [quotations]
+  );
+
+  /**
+   * An order called off leaves its quotation saying "send", so the two have
+   * to be read together. The API sends that with the row now, which is the
+   * usual path; the orders list is still read for a backend that does not.
+   */
   useEffect(() => {
+    /* Nothing to decide until the quotations are in. */
+    if (loading) return undefined;
+
+    if (carriesOrderState || !quotations.length) {
+      setOrderState(orderStateFromRows(quotations));
+      setOrdersReady(true);
+      return undefined;
+    }
+
     let alive = true;
     loadOrderSources((rows, settled) => {
       if (!alive) return;
       setOrderState(buildOrderStateByQuote(rows));
-      /* Settled even on failure: the page then reads the quotes' own
-         word, which is the best it can do, rather than waiting for
-         ever. */
+      /* Settled even on failure: the page then reads the quotes' own word,
+         which is the best it can do, rather than waiting for ever. */
       if (settled) setOrdersReady(true);
     });
     return () => {
       alive = false;
     };
-  }, []);
+  }, [loading, carriesOrderState, quotations]);
 
   /* The table is made of the quotations, so it waits for those alone.
      Where each one stands needs the orders list as well, and against a
@@ -219,7 +229,7 @@ const Quotation = () => {
       ) {
         return false;
       }
-      if (statusFilter === "sent" && !isSent(q)) return false;
+      if (statusFilter === "confirmed" && !isSent(q)) return false;
       if (statusFilter === "cancelled" && !isCancelled(q)) return false;
       if (statusFilter === "pending" && (isSent(q) || isCancelled(q)))
         return false;
@@ -281,32 +291,61 @@ const Quotation = () => {
   const indexOfLastItem = currentPage * itemsPerPage;
   const currentItems = filtered.slice(indexOfLastItem - itemsPerPage, indexOfLastItem);
 
-  const handleDelete = async (id) => {
-    if (!window.confirm("Are you sure you want to delete this quotation?")) return;
-    try {
-      await axios.delete(`${ApiURL}/quotations/deletequotation/${id}`);
-      setQuotations((prev) => prev.filter((q) => q._id !== id));
-      setSelectedRows((prev) => prev.filter((x) => x !== id));
-      toast.success("Quotation deleted");
-    } catch (error) {
-      toast.error("Failed to delete quotation");
-    }
+  /**
+   * Deleting asks for the admin password - the same gate the enquiry and
+   * order lists use. A quotation is the price a client was given; one click
+   * from a screen left open should not take it away.
+   */
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+
+  const askToDelete = (ids) => {
+    setDeleteError("");
+    setPendingDelete(ids);
   };
 
-  const handleDeleteSelected = async () => {
+  const handleDelete = (id) => askToDelete([id]);
+
+  const handleDeleteSelected = () => {
     if (!selectedRows.length) return;
-    if (!window.confirm(`Delete ${selectedRows.length} selected quotations?`)) return;
+    askToDelete([...selectedRows]);
+  };
+
+  const runDelete = async (password) => {
+    const ids = pendingDelete || [];
+    setDeleting(true);
+    setDeleteError("");
+
     try {
-      await Promise.all(
-        selectedRows.map((id) =>
-          axios.delete(`${ApiURL}/quotations/deletequotation/${id}`)
-        )
+      /* One at a time, so a rejected password is reported once rather than
+         as a row of identical failures. */
+      for (const id of ids) {
+        await axios.delete(`${ApiURL}/quotations/deletequotation/${id}`, {
+          data: { password },
+        });
+      }
+
+      setQuotations((prev) => prev.filter((q) => !ids.includes(q._id)));
+      setSelectedRows((prev) => prev.filter((x) => !ids.includes(x)));
+      setPendingDelete(null);
+      toast.success(
+        ids.length === 1
+          ? "Quotation deleted"
+          : `${ids.length} quotations deleted`
       );
-      setQuotations((prev) => prev.filter((q) => !selectedRows.includes(q._id)));
-      setSelectedRows([]);
-      toast.success("Selected quotations deleted");
     } catch (error) {
-      toast.error("Failed to delete some quotations");
+      const status = error?.response?.status;
+      const message = error?.response?.data?.error;
+
+      if (status === 400 || status === 401 || status === 403) {
+        setDeleteError(message || "Password is not correct");
+      } else {
+        setPendingDelete(null);
+        toast.error(message || "Failed to delete");
+      }
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -472,7 +511,7 @@ const Quotation = () => {
             <option value="all">All Statuses</option>
             <option value="pending">Pending</option>
             {/* The stored value stays "sent"; only the wording changes. */}
-            <option value="sent">Confirmed</option>
+            <option value="confirmed">Confirmed</option>
             <option value="cancelled">Cancelled</option>
           </Form.Select>
 
@@ -739,12 +778,36 @@ const Quotation = () => {
               itemsPerPage={itemsPerPage}
               currentPage={currentPage}
               onPageChange={setCurrentPage}
+              loading={loading}
             />
           </div>
         </Card>
 
         <QuotePeek quote={activeQuote} onClose={() => setActiveId(null)} />
       </div>
+
+      <ConfirmPasswordModal
+        show={Boolean(pendingDelete)}
+        onHide={() => setPendingDelete(null)}
+        onConfirm={runDelete}
+        busy={deleting}
+        error={deleteError}
+        title={
+          (pendingDelete || []).length > 1
+            ? `Delete ${pendingDelete.length} quotations?`
+            : "Delete this quotation?"
+        }
+        message={
+          (pendingDelete || []).length > 1
+            ? `${pendingDelete.length} quotations and the prices on them will be removed.`
+            : "The quotation and the prices on it will be removed."
+        }
+        confirmLabel={
+          (pendingDelete || []).length > 1
+            ? `Delete ${pendingDelete.length}`
+            : "Delete quotation"
+        }
+      />
     </Container>
   );
 };

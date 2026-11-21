@@ -84,9 +84,53 @@ export const buildStageMap = (quotations, orders) => {
   return stages;
 };
 
-/** No quotation was ever raised against this enquiry. */
+/**
+ * The stage an enquiry is at.
+ *
+ * The API now works this out and sends it with the row, so the usual answer
+ * is simply to read it. The map is the fallback for a backend that does not
+ * - the deployed one, until this ships - and for anything still joining the
+ * lists itself. With neither, no quotation was ever raised against it.
+ */
 export const stageFromMap = (stageMap, enquiry) =>
-  stageMap.get(String(enquiry?.enquiryId ?? "")) || "pending";
+  enquiry?.pipelineStatus ||
+  stageMap.get(String(enquiry?.enquiryId ?? "")) ||
+  "pending";
+
+/**
+ * Whether the rows already carry their stage, so there is nothing to join.
+ *
+ * Checked on the rows rather than assumed from a version number: the same
+ * build of this panel is pointed at more than one backend, and one of them
+ * sends the field while another does not.
+ */
+export const rowsCarryStage = (rows) =>
+  Array.isArray(rows) && rows.length > 0 && rows.every((r) => r?.pipelineStatus);
+
+/**
+ * The same quoteId -> order state map, from quotations that already carry it.
+ *
+ * The API sends orderState on each quotation now, so the quotation screens
+ * no longer have to download all 1,250 orders to find out whether a quote
+ * marked "send" was later called off.
+ */
+export const orderStateFromRows = (quotations) => {
+  const byQuote = new Map();
+  quotations.forEach((q) => {
+    if (q?.orderState) byQuote.set(String(q.quoteId || ""), String(q.orderState));
+  });
+  return byQuote;
+};
+
+/**
+ * Whether the rows carry it. The field is null where no order was raised, so
+ * the test is that the key is present, not that it has a value - otherwise
+ * every list with one un-ordered quote in it would read as not carrying it.
+ */
+export const rowsCarryOrderState = (rows) =>
+  Array.isArray(rows) &&
+  rows.length > 0 &&
+  rows.every((r) => r && Object.prototype.hasOwnProperty.call(r, "orderState"));
 
 /* ---------------------------------------------------------------------------
    Getting hold of those two lists

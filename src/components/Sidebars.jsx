@@ -23,7 +23,7 @@ import axios from "axios";
 import { ApiURL } from "../api";
 import { toneForPath } from "../config/pageTones";
 
-const Sidebars = ({ isOpen = false, onClose = () => {} }) => {
+const Sidebars = ({ isOpen = false, onClose = () => { } }) => {
   const [userAccess, setUserAccess] = useState({});
   const location = useLocation();
   const token = sessionStorage.getItem("token");
@@ -48,7 +48,7 @@ const Sidebars = ({ isOpen = false, onClose = () => {} }) => {
       { key: "banner", name: "Banner", path: "/banner", icon: FaTags, group: "Catalogue" },
       { key: "damagedAndLost", name: "Damaged/Lost", path: "/damaged-products", icon: FaExclamationTriangle, group: "Catalogue" },
 
-      { key: "paymentReport", name: "Payment Report", path: "/payment-report", icon: FaChartBar, group: "Reports" },
+      // { key: "paymentReport", name: "Payment Report", path: "/payment-report", icon: FaChartBar, group: "Reports" },
       { key: "reports", name: "Reports", path: "/reports", icon: FaChartLine, group: "Reports" },
 
       { key: "termsAndConditions", name: "Terms & Conditions", path: "/terms-conditions", icon: FaFileContract, group: "Settings" },
@@ -141,9 +141,8 @@ const Sidebars = ({ isOpen = false, onClose = () => {} }) => {
 
   return (
     <div
-      className={`flex-column flex-shrink-0 vh-100 position-fixed sidebar-scroll app-sidebar ${
-        isOpen ? "is-open" : ""
-      }`}
+      className={`flex-column flex-shrink-0 vh-100 position-fixed sidebar-scroll app-sidebar ${isOpen ? "is-open" : ""
+        }`}
       style={{ overflowY: "auto", overflowX: "hidden" }}
     >
       <div className="sidebar-brand">

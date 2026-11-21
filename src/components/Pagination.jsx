@@ -139,6 +139,10 @@ const Pagination = ({
   itemsPerPage = 10,
   currentPage,
   onPageChange,
+  /* While the rows are still on their way there is nothing to count, and
+     "Showing 1 to 0 of 0 entries" reads as an empty table rather than one
+     that has not arrived. Pass loading and it says so instead. */
+  loading = false,
 }) => {
   const totalPages = Math.ceil(totalItems / itemsPerPage);
   const maxPagesToShow = 5;
@@ -175,7 +179,11 @@ const Pagination = ({
   return (
     <div className="pagination-container d-flex justify-content-between align-items-center mt-3">
       <div className="pagination-info">
-        Showing {startIndex} to {endIndex} of {totalItems} entries
+        {loading ? (
+          <span className="pagination-info__loading">Loading entries&hellip;</span>
+        ) : (
+          <>Showing {startIndex} to {endIndex} of {totalItems} entries</>
+        )}
       </div>
       <div className="pagination-controls d-flex align-items-center">
         <button

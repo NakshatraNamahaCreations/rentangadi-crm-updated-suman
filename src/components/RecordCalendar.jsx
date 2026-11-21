@@ -94,6 +94,12 @@ const RecordCalendar = ({
   doneLabel = "Done",
   pendingLabel = "Pending",
   cancelledLabel = "Cancelled",
+  /* The next few dated records, under the selected day. Three pages share
+     this calendar, so whether the panel earns its place is the caller's
+     call rather than this component's: the quotation calendar turns it off.
+     It stays on where nothing has been said, so no page changes by
+     accident. */
+  showUpcoming = true,
   onSelect,
   onVisibleChange,
 }) => {
@@ -354,6 +360,9 @@ const RecordCalendar = ({
      and something called off is not. They stay in the grid and the counts,
      where the Cancelled filter is there to find them. */
   const upcoming = useMemo(() => {
+    /* Nothing to work out for a panel that is not drawn - this walks every
+       day in the month and every record on it. */
+    if (!showUpcoming) return [];
     const a = api.current;
     const today = moment().startOf("day");
     const seen = new Set();
@@ -373,7 +382,7 @@ const RecordCalendar = ({
       });
     return out.slice(0, 4);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [byDate, stageOf]);
+  }, [byDate, stageOf, showUpcoming]);
 
   /* How the selected day splits across the states this caller uses. */
   const selectedBreakdown = useMemo(
@@ -689,6 +698,7 @@ const RecordCalendar = ({
           )}
         </div>
 
+        {showUpcoming ? (
         <div className="qc-panel">
           <span className="qc-panel__title">Upcoming</span>
           {upcoming.length ? (
@@ -734,6 +744,7 @@ const RecordCalendar = ({
             <p className="qc-empty">Nothing upcoming this month.</p>
           )}
         </div>
+        ) : null}
       </aside>
     </div>
   );

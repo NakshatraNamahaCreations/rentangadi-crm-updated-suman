@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Modal, Spinner } from "react-bootstrap";
 import axios from "axios";
 import {
@@ -225,12 +225,48 @@ const DayRecordsModal = ({
   const items = detail ? kind.build(detail) : [];
   const totals = detail ? kind.compute(detail, items) : null;
 
+  /* Each record's own breakdown, kept by id.
+
+     The day's figures at the top are a sum of exactly these, and every
+     record behind them has already been read, so a row can show what it is
+     made of without being opened and without a second request. */
+  const breakdownById = useMemo(() => {
+    const map = new Map();
+    dayDetails.forEach(({ record }) => {
+      const id = String(record?._id || record?.id || "");
+      if (!id) return;
+      map.set(id, kind.compute(record, kind.build(record)));
+    });
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dayDetails, variant]);
+
   /* The day as the sum of its records' own breakdowns. */
   const dayTotals = dayDetails.length
-    ? sumTotals(
-        dayDetails.map(({ record }) => kind.compute(record, kind.build(record)))
-      )
+    ? sumTotals([...breakdownById.values()])
     : null;
+
+  /**
+   * What one record is made of, as a line of parts.
+   *
+   * Rental is always named, because a record with nothing else on it should
+   * still say where its money is. The rest appear only when they carry
+   * something - a row reading "Transport 0 · Labour 0 · Reupholstery 0" is
+   * noise on top of the figure the row already shows.
+   */
+  const partsOfRecord = (id) => {
+    const t = breakdownById.get(String(id));
+    if (!t) return null;
+
+    return [
+      ["Rental", t.productsTotal, true],
+      ["Discount", -t.discountAmount, false],
+      ["Transport", t.transport + t.additionalTransportation, false],
+      ["Labour", t.labour, false],
+      ["Reupholstery", t.refurb, false],
+      ["GST", t.gstAmount, false],
+    ].filter(([, value, always]) => always || Math.abs(value) > 0);
+  };
 
   /* The day in the parts the business reads it in. Transportation carries
      both charges where a record has two; Total is what would be billed,
@@ -423,6 +459,7 @@ const DayRecordsModal = ({
                 {records.map((r) => {
                   const tone = kind.toneOf(r);
                   const id = r._id || r.id;
+                  const parts = partsOfRecord(id);
                   return (
                     <button
                       key={id}
@@ -440,6 +477,22 @@ const DayRecordsModal = ({
                         {r.Address || r.address ? (
                           <span className="dom-row__sub">
                             {r.Address || r.address}
+                          </span>
+                        ) : null}
+
+                        {/* What this one is made of, without opening it.
+                            While the day is still being read there is
+                            nothing to show yet, so the line is simply
+                            absent rather than a row of dashes. */}
+                        {parts ? (
+                          <span className="dom-row__parts">
+                            {parts.map(([label, value]) => (
+                              <span className="dom-row__part" key={label}>
+                                <em>{label}</em>
+                                {value < 0 ? "−" : ""}&#8377;
+                                {fmtMoney(Math.abs(value))}
+                              </span>
+                            ))}
                           </span>
                         ) : null}
                       </span>

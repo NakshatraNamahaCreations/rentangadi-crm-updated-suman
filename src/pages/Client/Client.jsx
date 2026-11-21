@@ -26,10 +26,6 @@ import {
   inr,
   compactInr,
   initials,
-  phoneKey,
-  nameKey,
-  interactionDate,
-  amountOf,
   sinceLabel,
   activityTone,
   executivesOf,
@@ -47,48 +43,18 @@ import BusyButton from "../../components/BusyButton";
  * name match. Nothing on this page is stored on the client itself.
  */
 
-/* Groups records under both keys a client may be found by. */
-const indexByClient = (rows) => {
-  const byPhone = new Map();
-  const byName = new Map();
-  rows.forEach((r) => {
-    const p = phoneKey(r?.clientNo ?? r?.clientNumber ?? r?.phoneNumber);
-    if (p) {
-      if (!byPhone.has(p)) byPhone.set(p, []);
-      byPhone.get(p).push(r);
-    }
-    const n = nameKey(r?.clientName);
-    if (n) {
-      if (!byName.has(n)) byName.set(n, []);
-      byName.get(n).push(r);
-    }
-  });
-  return { byPhone, byName };
-};
-
-const lookup = (index, client) => {
-  const p = phoneKey(client.contactPersonNumber);
-  if (p && index.byPhone.has(p)) return index.byPhone.get(p);
-  const n = nameKey(client.companyName);
-  if (n && index.byName.has(n)) return index.byName.get(n);
-  return [];
-};
-
-const latestOf = (rows) => {
-  let best = null;
-  rows.forEach((r) => {
-    const d = interactionDate(r);
-    if (d && (!best || d.isAfter(best))) best = d;
-  });
-  return best;
-};
+/* indexByClient, lookup and latestOf used to live here: they matched every
+   enquiry and order onto a client by phone, falling back to name. The server
+   does that match now - see controller/clientActivity.js - so the page is
+   handed the figures instead of both collections. */
 
 const Client = () => {
   const navigate = useNavigate();
 
   const [clients, setClients] = useState([]);
-  const [enquiries, setEnquiries] = useState([]);
-  const [orders, setOrders] = useState([]);
+  /* clientId -> { enquiries, orders, business, lastActivity, lastKind },
+     as the server works them out. */
+  const [activity, setActivity] = useState({});
   const [loading, setLoading] = useState(true);
 
   const [searchQuery, setSearchQuery] = useState("");
@@ -99,6 +65,9 @@ const Client = () => {
 
   const [selectedRows, setSelectedRows] = useState([]);
   const [activeId, setActiveId] = useState(null);
+  /* The open client's own records, fetched when the panel opens. */
+  const [history, setHistory] = useState({ enquiries: [], orders: [] });
+  const [historyLoading, setHistoryLoading] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
 
@@ -143,14 +112,22 @@ const Client = () => {
     }
   };
 
-  /* Enquiries and orders are what make the business columns possible; if
-     either call fails the page still lists the clients. */
+  /**
+   * The business columns, worked out by the server.
+   *
+   * This page used to download every enquiry and every order - 909KB between
+   * them - to end up with five numbers per client. It now asks for those
+   * numbers, which is about 50KB, and the join behind them is the same
+   * phone-then-name match this file used to do, moved rather than changed.
+   *
+   * If that call fails the page still lists the clients, with the business
+   * columns empty - the same as before, when either list could fail.
+   */
   const fetchAll = async () => {
     setLoading(true);
     const results = await Promise.allSettled([
       fetchClients(),
-      axios.get(`${ApiURL}/Enquiry/getallEnquiry`),
-      axios.get(`${ApiURL}/order/getallorder`),
+      axios.get(`${ApiURL}/client/activity`),
     ]);
 
     if (results[0].status === "rejected") {
@@ -158,45 +135,33 @@ const Client = () => {
       toast.error("Could not load the client list");
     }
     if (results[1].status === "fulfilled") {
-      const d = results[1].value.data;
-      setEnquiries(Array.isArray(d) ? d : d?.enquiryData || d?.data || []);
-    }
-    if (results[2].status === "fulfilled") {
-      const d = results[2].value.data;
-      setOrders(Array.isArray(d) ? d : d?.orderData || d?.data || []);
+      setActivity(results[1].value?.data?.activity || {});
+    } else {
+      console.error("Error fetching client activity:", results[1].reason);
     }
     setLoading(false);
   };
 
-  /* ---- Join the activity onto each client ---- */
-  const enriched = useMemo(() => {
-    const enqIndex = indexByClient(enquiries);
-    const ordIndex = indexByClient(orders);
-    return clients.map((c) => {
-      const cEnq = lookup(enqIndex, c);
-      const cOrd = lookup(ordIndex, c);
-      const business = cOrd.reduce((s, o) => s + amountOf(o), 0);
-      const lastOrder = latestOf(cOrd);
-      const lastEnq = latestOf(cEnq);
-      let lastActivity = null;
-      let lastKind = "";
-      if (lastOrder && (!lastEnq || lastOrder.isAfter(lastEnq))) {
-        lastActivity = lastOrder;
-        lastKind = "Order";
-      } else if (lastEnq) {
-        lastActivity = lastEnq;
-        lastKind = "Enquiry";
-      }
-      return {
-        ...c,
-        enquiries: cEnq,
-        orders: cOrd,
-        business,
-        lastActivity,
-        lastKind,
-      };
-    });
-  }, [clients, enquiries, orders]);
+  /* ---- Put the server's figures onto each client ---- */
+  const enriched = useMemo(
+    () =>
+      clients.map((c) => {
+        /* A client with nothing recorded against it is not in the answer at
+           all, so an absent entry is read as nothing rather than as missing
+           data. */
+        const a = activity[String(c._id)] || {};
+        const last = a.lastActivity ? moment(a.lastActivity) : null;
+        return {
+          ...c,
+          enquiryCount: a.enquiries || 0,
+          orderCount: a.orders || 0,
+          business: a.business || 0,
+          lastActivity: last && last.isValid() ? last : null,
+          lastKind: a.lastKind || "",
+        };
+      }),
+    [clients, activity]
+  );
 
   const executives = useMemo(() => {
     const set = new Set();
@@ -276,7 +241,7 @@ const Client = () => {
       moment(c.createdAt).isSame(moment(), "month")
     ).length;
 
-    const withOrders = enriched.filter((c) => c.orders.length > 0).length;
+    const withOrders = enriched.filter((c) => c.orderCount > 0).length;
 
     return {
       total: enriched.length,
@@ -442,8 +407,8 @@ const Client = () => {
         Executives: executivesOf(c)
           .map((e) => e.name)
           .join(", "),
-        Enquiries: c.enquiries.length,
-        Orders: c.orders.length,
+        Enquiries: c.enquiryCount,
+        Orders: c.orderCount,
         "Total Business": c.business,
         "Last Interaction": c.lastActivity
           ? c.lastActivity.format("DD-MM-YYYY")
@@ -464,7 +429,55 @@ const Client = () => {
     }
   };
 
-  const activeClient = filtered.find((c) => c._id === activeId) || null;
+  /**
+   * The open client's own enquiries and orders.
+   *
+   * The panel lists them, so it needs the records themselves. Fetching them
+   * when it opens costs one small call for the one client being looked at,
+   * where the page used to download both whole collections on load in case
+   * someone clicked a row.
+   */
+  useEffect(() => {
+    if (!activeId) {
+      setHistory({ enquiries: [], orders: [] });
+      return;
+    }
+
+    let alive = true;
+    setHistoryLoading(true);
+
+    axios
+      .get(`${ApiURL}/client/${activeId}/history`)
+      .then((res) => {
+        if (!alive) return;
+        setHistory({
+          enquiries: res?.data?.enquiries || [],
+          orders: res?.data?.orders || [],
+        });
+      })
+      .catch((error) => {
+        if (!alive) return;
+        console.error("Error fetching client history:", error);
+        /* The panel then shows its own "nothing yet" copy, which is wrong
+           but not misleading in the way a stale list would be. */
+        setHistory({ enquiries: [], orders: [] });
+      })
+      .finally(() => {
+        if (alive) setHistoryLoading(false);
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, [activeId]);
+
+  const activeRow = filtered.find((c) => c._id === activeId) || null;
+
+  /* The panel reads client.enquiries and client.orders as arrays, so the
+     fetched records are put where it already looks for them. */
+  const activeClient = activeRow
+    ? { ...activeRow, enquiries: history.enquiries, orders: history.orders }
+    : null;
   const allOnPage =
     pageRows.length > 0 && pageRows.every((c) => selectedRows.includes(c._id));
 
@@ -782,6 +795,7 @@ const Client = () => {
               itemsPerPage={itemsPerPage}
               currentPage={currentPage}
               onPageChange={setCurrentPage}
+              loading={loading}
             />
           </div>
         </Card>

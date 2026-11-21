@@ -32,9 +32,6 @@ import {
   FaChevronRight,
   FaPhoneAlt,
   FaFilePdf,
-  FaFileInvoiceDollar,
-  FaShoppingBag,
-  FaFlagCheckered,
   FaBookmark,
   FaGripVertical,
   FaBoxOpen,
@@ -887,6 +884,41 @@ const QuotationDetails = () => {
     (p) => !addedProductIds.includes(String(p._id))
   );
 
+  /**
+   * What this quotation's grand total becomes with these slots on it.
+   *
+   * Both adding and removing a product have to send a new total, and the one
+   * the record carries is no use for it: `finalTotal` is only recalculated
+   * while the table renders, so inside a handler it is still the total from
+   * before the change. Adding a product therefore saved the old figure, and
+   * removing one saved a figure I had worked out by hand with the days left
+   * out - a 32 day hire went in as one day's money.
+   *
+   * So both go through the util the invoice and the calendar already use.
+   * One money calculation, not three. `computeQuoteTotals` prefers the
+   * stored GrandTotal, which is the one thing that must not be used here,
+   * so the computed parts are added up instead.
+   */
+  const recomputeGrandTotal = (source) => {
+    const totals = computeQuoteTotals(source);
+    if (!totals) return Number(source?.GrandTotal) || 0;
+
+    const computed = Math.round(totals.totalAfterCharges + totals.gstAmount);
+
+    /* Eight quotations carry discount: 100, and five of those were saved
+       with the discount never applied - QT2439 holds 540,440 against lines
+       that a hundred per cent off reduces to nothing. Writing the computed
+       zero over a real total because of a bad discount field would lose the
+       figure the client was actually quoted, so a zero against priced lines
+       is treated as the record being wrong rather than the total being nil,
+       and what is already stored is kept. */
+    if (computed === 0 && totals.productsTotal > 0) {
+      return Number(source?.GrandTotal) || 0;
+    }
+
+    return computed;
+  };
+
   const handleAddProduct = async () => {
     if (!addRows.length || !addRowsReady) return;
 
@@ -975,7 +1007,9 @@ const QuotationDetails = () => {
       labourecharge: Number(quotation?.labourecharge || 0),
       refurbishment: Number(quotation?.refurbishment || 0),
       GST: Number(quotation?.GST || 0),
-      GrandTotal: Number(quotation?.finalTotal || quotation?.GrandTotal || 0),
+      /* With the new products on it, not the total from before they were
+         added - which is what this used to send. */
+      GrandTotal: recomputeGrandTotal({ ...quotation, slots: updatedSlots }),
       slots: slotsPayload,
     };
 
@@ -989,10 +1023,19 @@ const QuotationDetails = () => {
         const updatedQuotation = { ...quotation, slots: updatedSlots };
         setQuotation(updatedQuotation);
         originalQuotationRef.current = JSON.parse(JSON.stringify(updatedQuotation));
-        toast.success(
+        /* The same line goes onto the enquiry this quotation came from, so
+           the two stop disagreeing about what was asked for. Said out loud
+           rather than assumed: a quotation with no enquiry behind it cannot
+           be synced, and the toast should not claim otherwise. */
+        const what =
           newProducts.length === 1
-            ? "Product added successfully"
-            : `${newProducts.length} products added successfully`
+            ? "Product added"
+            : `${newProducts.length} products added`;
+
+        toast.success(
+          res.data?.enquiry?.status === "added"
+            ? `${what} to the quotation and the enquiry`
+            : `${what} successfully`
         );
         setShowAdd(false);
         setAddRows([]);
@@ -1357,23 +1400,46 @@ const QuotationDetails = () => {
 
 
   // Delete a product (with API call)
+  /**
+   * Removes a product from the quotation.
+   *
+   * This used to do two things and neither of them stuck: it edited
+   * `quotation.slots` in place - a mutation React does not re-render on -
+   * and it never called the server at all. The row vanished from the local
+   * `items` list and came straight back on the next load, because nothing
+   * had been saved.
+   *
+   * So the record is rebuilt rather than mutated, and the change is written
+   * through the same endpoint the rest of the screen saves with.
+   */
   const handleDelete = async (item) => {
     if (!window.confirm("Delete this product?")) return;
 
+    const gone = (p) => String(p.productId) !== String(item.productId);
 
-    const updatedItems = items.filter((i) => i.productId !== item.productId);
+    const updatedItems = items.filter(gone);
 
-    quotation.slots.forEach((slot) => {
-      // Use filter to remove the product by productId
-      slot.Products = slot.Products.filter((prod) => prod.productId !== item.productId);
-    });
+    const next = {
+      ...quotation,
+      slots: (quotation?.slots || []).map((slot) => ({
+        ...slot,
+        Products: (slot.Products || []).filter(gone),
+      })),
+    };
 
-    console.log("quotation.slots: ", quotation?.slots[0].Products)
-    console.log("items: ", items)
+    const newGrandTotal = recomputeGrandTotal(next);
 
-    // Update the state with the filtered list
     setItems(updatedItems);
+    setQuotation(next);
 
+    const ok = await handleUpdateQuotation(next, newGrandTotal);
+
+    if (!ok) {
+      /* The server refused it, so put the row back rather than leaving the
+         screen showing a deletion that did not happen. */
+      setItems(items);
+      setQuotation(quotation);
+    }
   };
   // console.log("**outside quotation.slots: ", quotation?.slots[0].Products)
 
@@ -1861,7 +1927,7 @@ const QuotationDetails = () => {
         </div>
       </div>
 
-      {/* ---- Client + stage ---- */}
+      {/* ---- Client ---- */}
       <div className="qd-top">
         <Card className="qd-client">
           <Card.Body>
@@ -1887,56 +1953,10 @@ const QuotationDetails = () => {
           </Card.Body>
         </Card>
 
-        <Card className="qd-stage">
-          <Card.Body>
-            <ol className="qd-steps">
-              {(() => {
-                /* An order that was called off leaves the quote saying
-                   "send", so neither step is reached once it is. */
-                const cancelled = stage.label === "Cancelled";
-                const sent = !cancelled && quotation?.status === "send";
-                const ordered = !cancelled && Boolean(orderState);
-                const steps = [
-                  { key: "quote", label: "Quotation", icon: FaFileInvoiceDollar, done: true },
-                  { key: "sent", label: "Confirmed", icon: FaCheck, done: sent },
-                  { key: "order", label: "Order Generated", icon: FaShoppingBag, done: ordered },
-                  /* Completed means the job ran, not that an order exists;
-                     the records only ever say Confirm or cancelled today, so
-                     this stays unticked until one of these appears. */
-                  {
-                    key: "done",
-                    label: "Completed",
-                    icon: FaFlagCheckered,
-                    done: ["completed", "returned", "delivered"].includes(orderState),
-                  },
-                ];
-                // The furthest reached step is the one shown as current.
-                let current = 0;
-                steps.forEach((s2, i) => {
-                  if (s2.done) current = i;
-                });
-                return steps.map((s2, i) => (
-                  <li
-                    key={s2.key}
-                    className={
-                      "qd-step" +
-                      (s2.done ? " is-done" : "") +
-                      (i === current ? " is-current" : "")
-                    }
-                  >
-                    <span className="qd-step__dot">
-                      <s2.icon />
-                    </span>
-                    <span className="qd-step__label">{s2.label}</span>
-                    {i === current ? (
-                      <span className="qd-step__now">Current stage</span>
-                    ) : null}
-                  </li>
-                ));
-              })()}
-            </ol>
-          </Card.Body>
-        </Card>
+        {/* The stage strip - Quotation, Confirmed, Order Generated,
+            Completed - used to sit here. The status pill beside the page
+            title already says where the quotation stands, so this was the
+            same one word spread across half the width of the page. */}
       </div>
       {/* Company and Event Details */}
       <Card className="mb-4 shadow-sm qd-card qd-details">

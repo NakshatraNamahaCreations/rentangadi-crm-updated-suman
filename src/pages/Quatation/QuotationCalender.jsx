@@ -19,6 +19,8 @@ import DayRecordsModal from "../../components/DayRecordsModal";
 import {
   buildOrderStateByQuote,
   loadOrderSources,
+  orderStateFromRows,
+  rowsCarryOrderState,
 } from "../../utils/enquiryStage";
 import { toast } from "react-hot-toast";
 
@@ -57,9 +59,27 @@ const QuotationCalendar = () => {
   /* False until that is known - see the note in the list. */
   const [ordersReady, setOrdersReady] = useState(false);
 
-  /* Read once: the orders do not change with the month on screen. A failure
-     costs only the cancelled wording; the calendar still draws. */
+  /* Whether the rows already say what became of their order. */
+  const carriesOrderState = useMemo(
+    () => rowsCarryOrderState(quotations),
+    [quotations]
+  );
+
+  /**
+   * An order called off leaves its quotation saying "send". The API sends
+   * that with the row now; the orders list is still read for a backend that
+   * does not, and a failure there costs only the cancelled wording.
+   */
   useEffect(() => {
+    /* Nothing to decide until the month's quotations are in. */
+    if (loading) return undefined;
+
+    if (carriesOrderState || !quotations.length) {
+      setOrderState(orderStateFromRows(quotations));
+      setOrdersReady(true);
+      return undefined;
+    }
+
     let alive = true;
     loadOrderSources((rows, settled) => {
       if (!alive) return;
@@ -69,7 +89,7 @@ const QuotationCalendar = () => {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [loading, carriesOrderState, quotations]);
 
   /* Cancelled covers both: the quote withdrawn, and the order raised from
      it called off. */
@@ -87,42 +107,37 @@ const QuotationCalendar = () => {
   /* The day whose quotations are being looked at, or null. */
   const [dayBreakdown, setDayBreakdown] = useState(null);
 
-  /* No month filter exists on the API, so the whole list is fetched and the
-     calendar narrows it in memory - and it is fetched twice, started
-     together, for the reason given in the list: the copy the server keeps
-     answers in about a second and draws the grid, while the uncached read
-     costs seven and quietly replaces it, so a quote raised in the last
-     couple of minutes still turns up. */
+  /**
+   * One month's quotations.
+   *
+   * This used to fetch the whole list and narrow it here - twice over, in
+   * fact, because the copy the server keeps answers in about a second while
+   * an uncached read costs seven, so both were started together and the
+   * slower one quietly replaced the faster. Half a megabyte, every month
+   * change, to draw two hundred rows.
+   *
+   * The API now understands ?month=, and a month's worth is never served
+   * from that cache - so one call is both small and current, and the two-read
+   * dance has nothing left to solve.
+   */
   useEffect(() => {
     let alive = true;
     setLoading(true);
-    const rowsOf = (d) =>
-      Array.isArray(d) ? d : d?.quoteData || d?.data || [];
 
-    const held = axios
-      .get(`${ApiURL}/quotations/getallquotations`)
+    axios
+      .get(`${ApiURL}/quotations/getallquotations`, {
+        params: { month: cursor.format("YYYY-MM") },
+      })
       .then((res) => {
         if (!alive || res.status !== 200) return;
-        /* Only if the fresher read has not already answered. */
-        setQuotations((have) => (have.length ? have : rowsOf(res.data)));
-        setLoading(false);
+        const d = res.data;
+        setQuotations(Array.isArray(d) ? d : d?.quoteData || d?.data || []);
       })
-      .catch((error) => console.error("Error fetching quotation data:", error));
-
-    const fresh = axios
-      .get(`${ApiURL}/quotations/getallquotations?limit=100000&page=1`)
-      .then((res) => {
-        if (!alive || res.status !== 200) return;
-        setQuotations(rowsOf(res.data));
-      })
-      .catch((error) =>
-        console.error("Error refreshing quotation data:", error)
-      );
-
-    /* Even if both failed, the calendar must stop saying it is loading. */
-    Promise.allSettled([held, fresh]).then(() => {
-      if (alive) setLoading(false);
-    });
+      .catch((error) => console.error("Error fetching quotation data:", error))
+      .finally(() => {
+        /* Even if it failed, the calendar must stop saying it is loading. */
+        if (alive) setLoading(false);
+      });
 
     return () => {
       alive = false;
@@ -262,6 +277,10 @@ const QuotationCalendar = () => {
         cellUnit="quotes"
         doneLabel="Confirmed"
         pendingLabel="Pending"
+        /* No "Upcoming" panel here. The day a quotation is selected already
+           lists what falls on it, and the list screen is where the next few
+           are found. */
+        showUpcoming={false}
         onAmountClick={({ date, records }) =>
           setDayBreakdown({
             dateLabel: date?.isValid?.() ? date.format("DD MMM YYYY") : "",

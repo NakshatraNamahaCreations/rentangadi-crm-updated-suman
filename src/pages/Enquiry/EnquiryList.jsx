@@ -26,18 +26,82 @@ import {
   STAGE_TONE,
   buildStageMap,
   stageFromMap,
+  rowsCarryStage,
   loadStageSources,
 } from "../../utils/enquiryStage";
 import Pagination from "../../components/Pagination";
-import EnquiryPeek from "./EnquiryPeek";
 import { toast } from "react-hot-toast";
 import BusyButton from "../../components/BusyButton";
+import ConfirmPasswordModal from "../../components/ConfirmPasswordModal";
 
 const inr = (n) =>
   new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 }).format(
     Math.round(Number(n) || 0)
   );
 
+
+/**
+ * The three dates an enquiry carries, and which field each one is in.
+ *
+ * enquiryDate is NOT when the enquiry came in - it is the delivery date. The
+ * enquiry form fills it from the "Delivery date" picker and endDate from
+ * "Dismantle date", and the detail screen labels them that way. When the
+ * enquiry was raised is createdAt, which every one of the 1,894 rows has.
+ *
+ * Most rows write the two event dates DD-MM-YYYY and eighteen write
+ * YYYY-MM-DD, so both are read; anything else shows as a dash rather than as
+ * "Invalid date".
+ */
+const showEventDate = (value) => {
+  const on = moment(value, ["DD-MM-YYYY", "YYYY-MM-DD"], true);
+  return on.isValid() ? on.format("DD-MM-YYYY") : "—";
+};
+
+const showRaised = (enq) => {
+  const on = enq?.createdAt ? moment(enq.createdAt) : null;
+  return on && on.isValid() ? on.format("DD-MM-YYYY") : "—";
+};
+
+/**
+ * What an enquiry is worth.
+ *
+ * Not its stored GrandTotal, which is a single day of hire: not one of the
+ * 1,909 enquiries carries the rental days in that figure, so on the 410 that
+ * run longer than a day the list understated the job - enquiry 2283 showed
+ * 57,000 against a 32 day booking worth 1,824,000.
+ *
+ * Once a quotation has been raised, that quotation's total is the number
+ * everyone else works from, and it is what the enquiry's own detail screen
+ * shows, so the list shows it too and the two stop disagreeing. The backend
+ * sends it as quotedTotal.
+ *
+ * Before any quotation there is nothing to defer to, so the enquiry's own
+ * figure is used and the days are applied to it. GST on an enquiry is a
+ * rupee amount sitting inside GrandTotal, so it is taken out, the lines are
+ * multiplied by the days, and it goes back on at the same rate.
+ */
+const enquiryValue = (enq) => {
+  const quoted = Number(enq?.quotedTotal) || 0;
+  if (quoted > 0) return quoted;
+
+  const stored = Number(enq?.GrandTotal) || 0;
+  const gst = Number(enq?.GST) || 0;
+  const lines = stored - gst;
+
+  if (lines <= 0) return stored;
+
+  const start = moment(enq?.enquiryDate, ["DD-MM-YYYY", "YYYY-MM-DD"], true);
+  const end = moment(enq?.endDate, ["DD-MM-YYYY", "YYYY-MM-DD"], true);
+  const days =
+    start.isValid() && end.isValid()
+      ? Math.max(1, end.diff(start, "days") + 1)
+      : 1;
+
+  if (days === 1) return stored;
+
+  const gstRate = gst / lines;
+  return Math.round(lines * days * (1 + gstRate));
+};
 
 /* enquiryDate is DD-MM-YYYY; createdAt is used when present. */
 const whenOf = (enq) =>
@@ -70,8 +134,6 @@ const EnquiryList = () => {
   const [stagesReady, setStagesReady] = useState(false);
   const navigate = useNavigate();
 
-  // Row shown in the right-hand preview.
-  const [activeId, setActiveId] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
 
@@ -94,22 +156,47 @@ const EnquiryList = () => {
     fetchEnquiries();
   }, []);
 
-  /* How far each enquiry got is two more lists away, so the table does not
-     wait on them: the rows are on screen in about a second and the Status
-     column fills in when the answer arrives. The reader reports in as the
-     lists improve and says when they are as good as they will get. */
+  /* The rows carry their own stage when the API is new enough to send it. */
+  const carriesStage = useMemo(() => rowsCarryStage(enquiries), [enquiries]);
+
+  /**
+   * How far each enquiry got.
+   *
+   * The API sends this with the row now, so the usual path is to notice that
+   * and do nothing: no second and third list, no join in the browser, and no
+   * window where the status filters read zero because only one of three
+   * downloads had finished.
+   *
+   * The join is kept for a backend that does not send it - the same build of
+   * this panel is pointed at more than one - and reports in as its lists
+   * improve. A list that fails costs the stage and nothing else.
+   */
   useEffect(() => {
+    /* Nothing to decide until the enquiries are in: with no rows yet, "do
+       they carry a stage?" is always no, and the join would start before the
+       answer could be known - which is how both lists were still being
+       downloaded after this was supposed to have made them unnecessary. */
+    if (loading) return undefined;
+
+    if (carriesStage || !enquiries.length) {
+      setStagesReady(true);
+      return undefined;
+    }
+
     let alive = true;
     loadStageSources((quotes, orders, settled) => {
       if (!alive) return;
       setQuotations(quotes);
       setOrders(orders);
+      /* Settled even when a list failed: the stage then falls back to
+         Pending, which is the honest answer when there is nothing left to
+         read, and the screen must not wait for ever. */
       if (settled) setStagesReady(true);
     });
     return () => {
       alive = false;
     };
-  }, []);
+  }, [loading, carriesStage, enquiries.length]);
   const stageMap = useMemo(
     () => buildStageMap(quotations, orders),
     [quotations, orders]
@@ -125,7 +212,7 @@ const EnquiryList = () => {
     const total = enquiries.length;
     const quoted = enquiries.filter((e) => stageOf(e) === "confirmed").length;
     const open = total - quoted;
-    const value = enquiries.reduce((s, e) => s + (Number(e?.GrandTotal) || 0), 0);
+    const value = enquiries.reduce((s, e) => s + enquiryValue(e), 0);
 
     // Month-over-month on the two most recent COMPLETE months, so a part-way
     // month is not compared against a full one.
@@ -190,7 +277,7 @@ const EnquiryList = () => {
 
     rows = rows.slice().sort((a, b) => {
       if (sortBy === "amount") {
-        return (Number(b?.GrandTotal) || 0) - (Number(a?.GrandTotal) || 0);
+        return enquiryValue(b) - enquiryValue(a);
       }
       const da = whenOf(a).valueOf() || 0;
       const db = whenOf(b).valueOf() || 0;
@@ -206,34 +293,62 @@ const EnquiryList = () => {
     setSelectedEnquiries([]);
   }, [searchQuery, statusFilter, executiveFilter, fromDate, toDate, sortBy, itemsPerPage]);
 
-  useEffect(() => {
-    if (!filtered.length) {
-      if (activeId !== null) setActiveId(null);
-      return;
-    }
-    const stillThere = filtered.some((e) => e._id === activeId);
-    if (!stillThere) setActiveId(filtered[0]._id);
-  }, [filtered, activeId]);
-
-  const activeEnquiry = useMemo(
-    () => filtered.find((e) => e._id === activeId) || null,
-    [filtered, activeId]
-  );
-
   const indexOfLastItem = currentPage * itemsPerPage;
   const currentItems = filtered.slice(indexOfLastItem - itemsPerPage, indexOfLastItem);
 
-  const handleDelete = async (id) => {
-    if (!window.confirm("Are you sure you want to delete?")) return;
+  /**
+   * Deleting asks for the admin password.
+   *
+   * The window.confirm it replaces was one click, from a screen that may
+   * have been left open - and an enquiry carries a client's history and the
+   * money quoted against it. The password is checked on the server
+   * (middleware/confirmPassword.js); this only collects it.
+   */
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
+
+  const askToDelete = (ids) => {
+    setDeleteError("");
+    setPendingDelete(ids);
+  };
+
+  const handleDelete = (id) => askToDelete([id]);
+
+  const runDelete = async (password) => {
+    const ids = pendingDelete || [];
+    setDeleting(true);
+    setDeleteError("");
+
     try {
-      const response = await axios.delete(`${ApiURL}/Enquiry/deleteEnquiry/${id}`);
-      if (response.status === 200) {
-        setEnquiries((prev) => prev.filter((e) => e._id !== id));
-        setSelectedEnquiries((prev) => prev.filter((x) => x !== id));
-        toast.success("Enquiry deleted");
+      /* One at a time, so a wrong password is reported once rather than as
+         a row of identical failures. */
+      for (const id of ids) {
+        await axios.delete(`${ApiURL}/Enquiry/deleteEnquiry/${id}`, {
+          data: { password },
+        });
       }
+
+      setEnquiries((prev) => prev.filter((e) => !ids.includes(e._id)));
+      setSelectedEnquiries((prev) => prev.filter((x) => !ids.includes(x)));
+      setPendingDelete(null);
+      toast.success(
+        ids.length === 1 ? "Enquiry deleted" : `${ids.length} enquiries deleted`
+      );
     } catch (error) {
-      toast.error("Failed to delete enquiry");
+      const status = error?.response?.status;
+      const message = error?.response?.data?.error;
+
+      /* A rejected password keeps the dialog open to be retyped; anything
+         else is a real failure and is reported as one. */
+      if (status === 400 || status === 401 || status === 403) {
+        setDeleteError(message || "Password is not correct");
+      } else {
+        setPendingDelete(null);
+        toast.error(message || "Failed to delete");
+      }
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -249,21 +364,9 @@ const EnquiryList = () => {
         : currentItems.map((e) => e._id)
     );
 
-  const handleDeleteSelected = async () => {
+  const handleDeleteSelected = () => {
     if (!selectedEnquiries.length) return;
-    if (!window.confirm(`Delete ${selectedEnquiries.length} selected enquiries?`)) return;
-    try {
-      await Promise.all(
-        selectedEnquiries.map((id) =>
-          axios.delete(`${ApiURL}/Enquiry/deleteEnquiry/${id}`)
-        )
-      );
-      setEnquiries((prev) => prev.filter((e) => !selectedEnquiries.includes(e._id)));
-      setSelectedEnquiries([]);
-      toast.success("Selected enquiries deleted");
-    } catch (error) {
-      toast.error("Failed to delete some enquiries");
-    }
+    askToDelete([...selectedEnquiries]);
   };
 
   /* Exports exactly the rows the filters currently show. */
@@ -272,20 +375,26 @@ const EnquiryList = () => {
       const rows = filtered.map((e, i) => ({
         "#": i + 1,
         "Enquiry Id": e?.enquiryId || "",
-        Date: e?.enquiryDate || "",
-        Time: e?.enquiryTime || "",
+        /* The old sheet had one column called "Date" holding enquiryDate,
+           which is the delivery date - named that way it read as the day the
+           enquiry came in. All three are now named for what they are. */
+        "Enquiry Date": showRaised(e),
+        "Delivery Date": showEventDate(e?.enquiryDate),
+        "Dismantle Date": showEventDate(e?.endDate),
+        Slot: e?.enquiryTime || "",
         Client: e?.clientName || "",
         Contact: e?.clientNo || "",
         Executive: e?.executivename || "",
-        Amount: Number(e?.GrandTotal) || 0,
+        Amount: enquiryValue(e),
         Status: STAGE_LABEL[stageOf(e)] || "Pending",
       }));
       const worksheet = XLSX.utils.json_to_sheet(rows);
       const workbook = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(workbook, worksheet, "Enquiries");
       worksheet["!cols"] = [
-        { wch: 5 }, { wch: 14 }, { wch: 12 }, { wch: 22 },
-        { wch: 28 }, { wch: 14 }, { wch: 18 }, { wch: 12 }, { wch: 10 },
+        { wch: 5 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 },
+        { wch: 22 }, { wch: 28 }, { wch: 14 }, { wch: 18 }, { wch: 12 },
+        { wch: 10 },
       ];
       XLSX.writeFile(workbook, `enquiries-${moment().format("YYYY-MM-DD")}.xlsx`);
     } catch (error) {
@@ -488,9 +597,8 @@ const EnquiryList = () => {
         </Card.Body>
       </Card>
 
-      {/* ---- Table + preview ---- */}
-      <div className="eq-split">
-      <Card className="eq-card eq-split__list">
+      {/* ---- Table ---- */}
+      <Card className="eq-card">
         <div className="table-responsive">
           <table className="table eq-table">
             <thead>
@@ -508,6 +616,9 @@ const EnquiryList = () => {
                 </th>
                 <th>Enquiry</th>
                 <th>Client</th>
+                <th className="eq-date-col">Enquiry Date</th>
+                <th className="eq-date-col">Delivery</th>
+                <th className="eq-date-col">Dismantle</th>
                 <th>Executive</th>
                 <th className="text-end">Amount</th>
                 <th>Status</th>
@@ -517,13 +628,13 @@ const EnquiryList = () => {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="7" className="text-center py-5">
+                  <td colSpan="10" className="text-center py-5">
                     <Spinner animation="border" size="sm" /> Loading enquiries...
                   </td>
                 </tr>
               ) : currentItems.length === 0 ? (
                 <tr>
-                  <td colSpan="7" className="text-center py-5 eq-none">
+                  <td colSpan="10" className="text-center py-5 eq-none">
                     No enquiries match these filters.
                   </td>
                 </tr>
@@ -531,12 +642,8 @@ const EnquiryList = () => {
                 currentItems.map((enq) => {
                   const stage = stageOf(enq);
                   return (
-                    <tr
-                      key={enq._id}
-                      className={enq._id === activeId ? "is-active" : ""}
-                      onClick={() => setActiveId(enq._id)}
-                    >
-                      <td onClick={(e) => e.stopPropagation()}>
+                    <tr key={enq._id}>
+                      <td>
                         <input
                           type="checkbox"
                           checked={selectedEnquiries.includes(enq._id)}
@@ -558,6 +665,16 @@ const EnquiryList = () => {
                         ) : null}
                       </td>
 
+                      <td className="eq-date-col">{showRaised(enq)}</td>
+
+                      <td className="eq-date-col">
+                        {showEventDate(enq.enquiryDate)}
+                      </td>
+
+                      <td className="eq-date-col">
+                        {showEventDate(enq.endDate)}
+                      </td>
+
                       <td>
                         {enq.executivename ? (
                           <span className="eq-person">
@@ -572,7 +689,7 @@ const EnquiryList = () => {
                       </td>
 
                       <td className="text-end eq-amount">
-                        &#8377;{inr(enq.GrandTotal)}
+                        &#8377;{inr(enquiryValue(enq))}
                       </td>
 
                       <td>
@@ -647,33 +764,33 @@ const EnquiryList = () => {
             itemsPerPage={itemsPerPage}
             currentPage={currentPage}
             onPageChange={setCurrentPage}
+            loading={loading}
           />
         </div>
       </Card>
 
-      <EnquiryPeek
-        enquiry={activeEnquiry}
-        /* While the stage is being read the rail shows the same waiting
-           chip as the row it came from. Left empty it would fall back to
-           the enquiry's own "sent" flag, which is the wording the stage
-           exists to replace. */
-        stageLabel={
-          !stagesReady
-            ? "…"
-            : activeEnquiry
-              ? STAGE_LABEL[stageOf(activeEnquiry)]
-              : null
+      <ConfirmPasswordModal
+        show={Boolean(pendingDelete)}
+        onHide={() => setPendingDelete(null)}
+        onConfirm={runDelete}
+        busy={deleting}
+        error={deleteError}
+        title={
+          (pendingDelete || []).length > 1
+            ? `Delete ${pendingDelete.length} enquiries?`
+            : "Delete this enquiry?"
         }
-        stageTone={
-          !stagesReady
-            ? "waiting"
-            : activeEnquiry
-              ? STAGE_TONE[stageOf(activeEnquiry)]
-              : null
+        message={
+          (pendingDelete || []).length > 1
+            ? `${pendingDelete.length} enquiries and everything recorded against them will be removed.`
+            : "The enquiry and everything recorded against it will be removed."
         }
-        onClose={() => setActiveId(null)}
+        confirmLabel={
+          (pendingDelete || []).length > 1
+            ? `Delete ${pendingDelete.length}`
+            : "Delete enquiry"
+        }
       />
-      </div>
     </Container>
   );
 };

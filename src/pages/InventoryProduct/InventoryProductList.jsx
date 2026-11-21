@@ -1,10 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Button, Card, Container, Form, Spinner } from "react-bootstrap";
 import {
-  FaBoxes,
-  FaCheckCircle,
-  FaLock,
-  FaExclamationTriangle,
   FaFileExcel,
   FaSearch,
   FaRegCalendarAlt,
@@ -14,12 +10,12 @@ import axios from "axios";
 import Select from "react-select";
 import DatePicker from "react-datepicker";
 import { format } from "date-fns";
-import * as XLSX from "xlsx";
-import { saveAs } from "file-saver";
 import { toast } from "react-hot-toast";
 import Pagination from "../../components/Pagination";
 import PendingQuotationsModal from "../../components/PendingQuotationsModal";
+import BlockedOrdersModal from "../../components/BlockedOrdersModal";
 import { ApiURL } from "../../api";
+import { exportInventoryWithImages } from "../../utils/inventoryExcel";
 import "react-datepicker/dist/react-datepicker.css";
 import BusyButton from "../../components/BusyButton";
 
@@ -27,7 +23,7 @@ import BusyButton from "../../components/BusyButton";
  * Inventory availability for a date range.
  *
  * The API answers for a window, so there is nothing to show until the user
- * picks one and fetches: the tiles and the table only appear afterwards.
+ * picks one and fetches: the table only appears afterwards.
  */
 
 const inr = (n) =>
@@ -48,14 +44,9 @@ const stockTone = (item) => {
   return { cls: "is-green", label: "Available" };
 };
 
-const exportToExcel = (data, filename = "InventoryData.xlsx") => {
-  const worksheet = XLSX.utils.json_to_sheet(data);
-  const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, worksheet, "Inventory");
-  const excelBuffer = XLSX.write(workbook, { bookType: "xlsx", type: "array" });
-  const file = new Blob([excelBuffer], { type: "application/octet-stream" });
-  saveAs(file, filename);
-};
+/* The SheetJS export this screen used to have is gone: it could write the
+   figures but not the product pictures, which is what the sheet is now for.
+   utils/inventoryExcel.js does both. */
 
 const InventoryProduct = () => {
   const [deliveryDate, setDeliveryDate] = useState("");
@@ -67,6 +58,9 @@ const InventoryProduct = () => {
   const [fetchedRange, setFetchedRange] = useState(null);
   /* The stock row whose quotation breakdown is open, or null. */
   const [underQuotationsRow, setUnderQuotationsRow] = useState(null);
+  /* Same idea for the Blocked column: the figure alone does not say whose
+     orders are holding the stock. */
+  const [blockedOrdersRow, setBlockedOrdersRow] = useState(null);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -167,6 +161,7 @@ const InventoryProduct = () => {
         return {
           productId,
           productName: productOption?.label || "Unknown",
+          productSubcategory: "",
           availableStock: 0,
           reservedStock: 0,
           pendingQuotationQty: 0,
@@ -187,35 +182,54 @@ const InventoryProduct = () => {
     }
   };
 
-  const handleExport = () => {
+  /* Fetching the pictures takes a moment, so the button says so rather than
+     looking like it did nothing. */
+  const [exporting, setExporting] = useState(false);
+
+  const handleExport = async () => {
     if (!inventory.length) {
       toast.error("Fetch an inventory range first");
       return;
     }
-    const dataToExport = filtered.map((item) => ({
-      "Product Name": item.productName,
-      "Available Stock": num(item.availableStock),
-      "Blocked Stock": num(item.reservedStock),
-      "Under Quotations": num(item.pendingQuotationQty),
-      "Total Stock": num(item.totalStock),
-      Price: num(item.price),
-      Status: stockTone(item).label,
-    }));
 
-    exportToExcel(
-      dataToExport,
-      fetchedRange
-        ? `inventory-${fetchedRange.startDate}-to-${fetchedRange.endDate}.xlsx`
-        : "InventoryData.xlsx"
-    );
+    setExporting(true);
+
+    const filename = fetchedRange
+      ? `inventory-${fetchedRange.startDate}-to-${fetchedRange.endDate}.xlsx`
+      : "InventoryData.xlsx";
+
+    try {
+      await exportInventoryWithImages({
+        rows: filtered.map((item) => ({
+          ...item,
+          statusLabel: stockTone(item).label,
+        })),
+        /* The picture is on the product list the dropdown is built from,
+           not on the inventory row, so it is looked up by id. */
+        imageOf: (item) =>
+          products.find((p) => p.value === item.productId)?.image || "",
+        filename,
+      });
+    } catch (error) {
+      console.error("Excel export failed:", error);
+      toast.error("Could not build the Excel file");
+    } finally {
+      setExporting(false);
+    }
   };
 
   /* ---- Search / status filter over the fetched rows ---- */
   const filtered = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return inventory.filter((item) => {
-      if (q && !String(item.productName || "").toLowerCase().includes(q)) {
-        return false;
+      /* The subcategory is on the row now, so it is searchable too - typing
+         "Chair" should find the chairs whether or not the word is in each
+         product's own name. */
+      if (q) {
+        const haystack = `${item.productName || ""} ${
+          item.productSubcategory || ""
+        }`.toLowerCase();
+        if (!haystack.includes(q)) return false;
       }
       if (statusFilter === "all") return true;
       if (statusFilter === "out") return num(item.availableStock) <= 0;
@@ -239,52 +253,12 @@ const InventoryProduct = () => {
   const pageStart = (currentPage - 1) * itemsPerPage;
   const pageRows = filtered.slice(pageStart, pageStart + itemsPerPage);
 
-  const stats = useMemo(() => {
-    let available = 0;
-    let blocked = 0;
-    let over = 0;
-    inventory.forEach((item) => {
-      available += num(item.availableStock);
-      blocked += num(item.reservedStock);
-      if (num(item.pendingQuotationQty) > num(item.availableStock)) over += 1;
-    });
-    return { checked: inventory.length, available, blocked, over };
-  }, [inventory]);
-
-  const tiles = [
-    {
-      key: "checked",
-      label: "Products Checked",
-      value: stats.checked,
-      hint: "In this range",
-      icon: FaBoxes,
-      tone: "blue",
-    },
-    {
-      key: "available",
-      label: "Available Units",
-      value: stats.available,
-      hint: "Free to allocate",
-      icon: FaCheckCircle,
-      tone: "green",
-    },
-    {
-      key: "blocked",
-      label: "Blocked Units",
-      value: stats.blocked,
-      hint: "Held by orders",
-      icon: FaLock,
-      tone: "amber",
-    },
-    {
-      key: "over",
-      label: "Over-committed",
-      value: stats.over,
-      hint: "Quoted beyond stock",
-      icon: FaExclamationTriangle,
-      tone: "violet",
-    },
-  ];
+  /* The strip of four tiles that used to sit here - Products Checked,
+     Available Units, Blocked Units, Over-committed - is gone. Totalling
+     units across different products said little: eighteen chairs and thirty
+     tables make "48 available", a number that answers no question anyone
+     asks of this screen. The per-product figures in the table below are
+     where the answer actually is. */
 
   const selectStyles = {
     valueContainer: (base) => ({
@@ -319,14 +293,22 @@ const InventoryProduct = () => {
           <Button
             className="eq-ghost"
             onClick={handleExport}
-            disabled={!inventory.length}
+            disabled={!inventory.length || exporting}
             title={
               inventory.length
-                ? "Export the rows below to Excel"
+                ? "Export the rows below to Excel, with a picture of each product"
                 : "Fetch an inventory range first"
             }
           >
-            <FaFileExcel /> Download Excel
+            {exporting ? (
+              <>
+                <Spinner animation="border" size="sm" /> Building the file…
+              </>
+            ) : (
+              <>
+                <FaFileExcel /> Download Excel
+              </>
+            )}
           </Button>
         </div>
       </div>
@@ -437,28 +419,13 @@ const InventoryProduct = () => {
         </Card>
       ) : (
         <>
-          <div className="eq-stats">
-            {tiles.map((t) => (
-              <div className={`eq-stat is-${t.tone}`} key={t.key}>
-                <span className="eq-stat__icon">
-                  <t.icon />
-                </span>
-                <div className="eq-stat__body">
-                  <span className="eq-stat__label">{t.label}</span>
-                  <span className="eq-stat__value">{t.value}</span>
-                  <span className="eq-stat__hint">{t.hint}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-
           <Card className="eq-card mb-3">
             <Card.Body className="eq-filters">
               <div className="eq-search">
                 <FaSearch />
                 <input
                   type="text"
-                  placeholder="Search these products..."
+                  placeholder="Search product or subcategory..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   aria-label="Search products"
@@ -494,6 +461,7 @@ const InventoryProduct = () => {
                 <thead>
                   <tr>
                     <th>Product</th>
+                    <th>Subcategory</th>
                     <th className="text-end">Available</th>
                     <th className="text-end">Blocked</th>
                     <th className="text-end">Under Quotations</th>
@@ -505,7 +473,7 @@ const InventoryProduct = () => {
                 <tbody>
                   {pageRows.length === 0 ? (
                     <tr>
-                      <td colSpan="7" className="text-center py-5 eq-none">
+                      <td colSpan="8" className="text-center py-5 eq-none">
                         No products match this filter.
                       </td>
                     </tr>
@@ -541,10 +509,29 @@ const InventoryProduct = () => {
                               </span>
                             </div>
                           </td>
+                          {/* A product with no subcategory on it shows a dash
+                              rather than an empty cell, so the column reads
+                              as "none recorded" and not as a rendering gap. */}
+                          <td className="inv-subcat">
+                            {item.productSubcategory || "—"}
+                          </td>
                           <td className="text-end eq-amount">
                             {num(item.availableStock)}
                           </td>
-                          <td className="text-end">{num(item.reservedStock)}</td>
+                          <td className="text-end">
+                            {num(item.reservedStock) > 0 ? (
+                              <button
+                                type="button"
+                                className="uq-link"
+                                title="See which orders are holding this product"
+                                onClick={() => setBlockedOrdersRow(item)}
+                              >
+                                {num(item.reservedStock)}
+                              </button>
+                            ) : (
+                              <span className="uq-plain">0</span>
+                            )}
+                          </td>
                           <td
                             className={
                               "text-end" + (over ? " inv-over" : "")
@@ -602,6 +589,7 @@ const InventoryProduct = () => {
                   itemsPerPage={itemsPerPage}
                   currentPage={currentPage}
                   onPageChange={setCurrentPage}
+                  loading={loading}
                 />
               </div>
             ) : null}
@@ -612,6 +600,13 @@ const InventoryProduct = () => {
         show={!!underQuotationsRow}
         onHide={() => setUnderQuotationsRow(null)}
         row={underQuotationsRow}
+        startDate={fetchedRange?.startDate}
+        endDate={fetchedRange?.endDate}
+      />
+      <BlockedOrdersModal
+        show={!!blockedOrdersRow}
+        onHide={() => setBlockedOrdersRow(null)}
+        row={blockedOrdersRow}
         startDate={fetchedRange?.startDate}
         endDate={fetchedRange?.endDate}
       />

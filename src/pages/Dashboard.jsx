@@ -274,8 +274,12 @@ const enquiryTone = (status) => {
 
 const Dashboard = () => {
   const [counts, setCounts] = useState({ Orders: 0, Clients: 0, Quotations: 0 });
-  const [orders, setOrders] = useState([]);
+  /* The five newest, as the server picked them - not a full list this screen
+     then sorts and slices. */
+  const [recentOrders, setRecentOrders] = useState([]);
   const [enquiries, setEnquiries] = useState([]);
+  /* { "Confirm": 1126, "cancelled": 127 } for the current year. */
+  const [orderStatusThisYear, setOrderStatusThisYear] = useState({});
   const [series, setSeries] = useState({ Orders: [], Clients: [], Quotations: [] });
   const [selectedCategory, setSelectedCategory] = useState("Orders");
 
@@ -283,80 +287,45 @@ const Dashboard = () => {
   const monthsSoFar = moment().month() + 1;
   const adminName = sessionStorage.getItem("adminName") || "Administrator";
 
+  /**
+   * One call for the whole screen.
+   *
+   * This used to make seven: three counters, then the entire orders, clients,
+   * quotations and enquiries lists - about 1.7MB - so the browser could count
+   * them, bucket them by month and take the newest five of two. All of that
+   * is now a handful of aggregates on the server, and the answer is 2KB.
+   */
   useEffect(() => {
-    fetchCounts();
-    fetchAllSeries();
-    fetchEnquiries();
-  }, []);
+    let alive = true;
 
-  const fetchCounts = async () => {
-    try {
-      const [ordersRes, clientsRes, quotationsRes] = await Promise.all([
-        axios.get(ApiURL + "/order/TotalNumberOfOrder"),
-        axios.get(ApiURL + "/client/TotalNumberOfClients"),
-        axios.get(ApiURL + "/quotations/TotalNumberOfquotation"),
-      ]);
-      setCounts({
-        Orders: ordersRes.data.totalorderCount || 0,
-        Clients: clientsRes.data.clientCount || 0,
-        Quotations: quotationsRes.data.totalQuotationCount || 0,
+    axios
+      .get(ApiURL + "/dashboard/summary")
+      .then((res) => {
+        if (!alive || res.status !== 200) return;
+        const d = res.data || {};
+        setCounts({
+          Orders: d.counts?.Orders || 0,
+          Clients: d.counts?.Clients || 0,
+          Quotations: d.counts?.Quotations || 0,
+        });
+        setSeries({
+          Orders: d.series?.Orders || Array(12).fill(0),
+          Clients: d.series?.Clients || Array(12).fill(0),
+          Quotations: d.series?.Quotations || Array(12).fill(0),
+        });
+        setRecentOrders(d.recentOrders || []);
+        setEnquiries(d.recentEnquiries || []);
+        setOrderStatusThisYear(d.orderStatusThisYear || {});
+      })
+      .catch(() => {
+        /* The cards then read zero, which is what they did before when any
+           of the seven failed. */
       });
-    } catch (error) {
-      // counts stay at zero
-    }
-  };
 
-  const pickList = (payload) => {
-    if (Array.isArray(payload)) return payload;
-    return (
-      payload?.orderData ||
-      payload?.Client ||
-      payload?.quoteData ||
-      payload?.data ||
-      []
-    );
-  };
-
-  const toMonthly = (data) => {
-    const monthly = Array(12).fill(0);
-    (Array.isArray(data) ? data : []).forEach((item) => {
-      if (!item?.createdAt) return;
-      const d = moment(item.createdAt);
-      if (d.isValid() && d.year() === thisYear) monthly[d.month()] += 1;
-    });
-    return monthly;
-  };
-
-  const fetchAllSeries = async () => {
-    // A high limit is passed so the value and status panels aggregate over the
-    // whole set rather than whatever the default first page returns.
-    const endpoints = [
-      ["Orders", ApiURL + "/order/getallorder"],
-      ["Clients", ApiURL + "/client/getallclients"],
-      ["Quotations", ApiURL + "/quotations/getallquotations"],
-    ];
-    const results = await Promise.allSettled(
-      endpoints.map((e) => axios.get(e[1]))
-    );
-    const next = {};
-    results.forEach((res, i) => {
-      const key = endpoints[i][0];
-      const list = res.status === "fulfilled" ? pickList(res.value?.data) : [];
-      next[key] = toMonthly(list);
-      if (key === "Orders") setOrders(Array.isArray(list) ? list : []);
-    });
-    setSeries(next);
-  };
-
-  const fetchEnquiries = async () => {
-    try {
-      const res = await axios.get(ApiURL + "/Enquiry/getallEnquiry");
-      const list = pickList(res?.data);
-      setEnquiries(Array.isArray(list) ? list : []);
-    } catch (error) {
-      setEnquiries([]);
-    }
-  };
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   /* Movement between the two most recent COMPLETE months. The running month is
      skipped on purpose: a few days against a full month reads as a false drop.
@@ -377,34 +346,17 @@ const Dashboard = () => {
     };
   };
 
-  const ordersThisYear = useMemo(
-    () =>
-      orders.filter((o) => {
-        const d = moment(o?.createdAt);
-        return d.isValid() && d.year() === thisYear;
-      }),
-    [orders, thisYear]
-  );
-
-
+  /* The server counts this year's orders by the status it stores; the labels
+     shown are still this screen's to choose, so several stored spellings can
+     fold into one slice of the donut. */
   const statusBreakdown = useMemo(() => {
     const b = {};
-    ordersThisYear.forEach((o) => {
-      const { label } = orderTone(o?.orderStatus);
-      b[label] = (b[label] || 0) + 1;
+    Object.entries(orderStatusThisYear).forEach(([status, n]) => {
+      const { label } = orderTone(status);
+      b[label] = (b[label] || 0) + n;
     });
     return b;
-  }, [ordersThisYear]);
-
-  const recentOrders = useMemo(
-    () =>
-      orders
-        .filter((o) => o?.createdAt)
-        .slice()
-        .sort((a, b) => moment(b.createdAt).valueOf() - moment(a.createdAt).valueOf())
-        .slice(0, 5),
-    [orders]
-  );
+  }, [orderStatusThisYear]);
 
   const recentEnquiries = useMemo(() => {
     const withDate = enquiries.map((e) => ({
@@ -413,18 +365,18 @@ const Dashboard = () => {
         ? moment(e.createdAt)
         : moment(e?.enquiryDate, "DD-MM-YYYY"),
     }));
-    return withDate
-      .filter((e) => e._when.isValid())
-      .sort((a, b) => b._when.valueOf() - a._when.valueOf())
-      .slice(0, 5);
+    return withDate.filter((e) => e._when.isValid());
   }, [enquiries]);
 
-  // Items on an order: products are nested under slots.
+  /* The server sends the count; the fallback is for anything still holding a
+     whole order, where products are nested under slots. */
   const itemCount = (order) =>
-    (order?.slots || []).reduce(
+    order?.itemCount ??
+    ((order?.slots || []).reduce(
       (sum, slot) => sum + ((slot?.products || []).length || 0),
       0
-    ) || (order?.products || []).length;
+    ) ||
+      (order?.products || []).length);
 
   const cards = [
     {
